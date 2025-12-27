@@ -759,7 +759,10 @@ struct NewTripView: View {
         .disabled(tripPlanViewModel?.isLoading == true)
         .opacity(tripPlanViewModel?.isLoading == true ? 0.7 : 1.0)
         .alert("Ошибка создания маршрута", isPresented: $showErrorAlert) {
-            Button("OK", role: .cancel) {
+            Button("Повторить") {
+                retryPlanGeneration()
+            }
+            Button("Закрыть", role: .cancel) {
                 showErrorAlert = false
             }
         } message: {
@@ -768,9 +771,12 @@ struct NewTripView: View {
     }
 
     private func openTripPlan() {
-        // Create ViewModel
-        let viewModel = TripPlanViewModel()
-        tripPlanViewModel = viewModel
+        // Create ViewModel if needed
+        if tripPlanViewModel == nil {
+            tripPlanViewModel = TripPlanViewModel()
+        }
+
+        guard let viewModel = tripPlanViewModel else { return }
 
         // Start async plan generation
         Task {
@@ -790,6 +796,28 @@ struct NewTripView: View {
                     isShowingTripPlan = true
                 } else if let error = viewModel.errorMessage {
                     // Error - show alert
+                    planGenerationError = error
+                    showErrorAlert = true
+                }
+            }
+        }
+    }
+
+    private func retryPlanGeneration() {
+        guard let viewModel = tripPlanViewModel else {
+            // If no viewModel exists, call openTripPlan to create one
+            openTripPlan()
+            return
+        }
+
+        // Retry using stored parameters
+        Task {
+            await viewModel.retryLastGeneration()
+
+            await MainActor.run {
+                if viewModel.plan != nil {
+                    isShowingTripPlan = true
+                } else if let error = viewModel.errorMessage {
                     planGenerationError = error
                     showErrorAlert = true
                 }

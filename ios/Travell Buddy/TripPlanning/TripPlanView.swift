@@ -347,20 +347,24 @@ struct TripPlanView: View {
     }
     
     private var mapPlaceholder: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "map")
-                .font(.system(size: 32, weight: .medium))
-                .foregroundColor(Color(.secondaryLabel))
-            Text("Карта будет здесь")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(Color(.secondaryLabel))
+        VStack(spacing: 0) {
+            // Day selector for the map (same as route view)
+            if let plan = viewModel.plan {
+                daySelector(plan: plan)
+                    .padding(.bottom, 12)
+            }
+
+            // Map or empty state
+            if !viewModel.currentDayActivitiesWithCoordinates.isEmpty {
+                RouteMapView(activities: viewModel.currentDayActivities)
+                    .frame(height: 400)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            } else {
+                NoMapDataView()
+                    .frame(height: 400)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(32)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
     }
     
     private var guideCTA: some View {
@@ -522,7 +526,7 @@ extension TripPlanView {
         chatViewModel = ChatViewModel(
             tripId: plan.tripId,
             onPlanUpdateRequested: { [weak viewModel] in
-                await viewModel?.updatePlanFromChat()
+                await viewModel?.updatePlanFromChat() ?? false
             }
         )
         isShowingChat = true

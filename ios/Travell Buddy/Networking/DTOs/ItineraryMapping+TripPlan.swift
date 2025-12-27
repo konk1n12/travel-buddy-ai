@@ -108,7 +108,10 @@ extension ItineraryBlockDTO {
             description: poi.location ?? "",
             category: category,
             address: poi.location,
-            note: notes
+            note: notes,
+            latitude: poi.lat,
+            longitude: poi.lon,
+            travelPolyline: travelPolyline
         )
     }
 

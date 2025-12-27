@@ -96,11 +96,42 @@ struct ChatView: View {
 
                 Divider()
 
+                // Retry banner when send failed
+                if viewModel.lastSendFailed {
+                    retryBanner
+                }
+
                 // Поле ввода
                 chatInputView
             }
         }
         .navigationBarHidden(true)
+    }
+
+    // MARK: Retry Banner
+
+    private var retryBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 14))
+                .foregroundColor(.orange)
+
+            Text("Сообщение не отправлено")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Color(.label))
+
+            Spacer()
+
+            Button(action: { retrySend() }) {
+                Text("Повторить")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.travelBuddyOrange)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color(.systemGray6))
     }
 
     // MARK: Chat Header
@@ -250,6 +281,14 @@ struct ChatView: View {
     private func updatePlan() {
         Task {
             await viewModel.requestPlanUpdate()
+        }
+    }
+
+    // MARK: Retry Send
+
+    private func retrySend() {
+        Task {
+            await viewModel.retrySendMessage()
         }
     }
 }

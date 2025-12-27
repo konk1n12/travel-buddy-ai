@@ -12,18 +12,23 @@ final class ChatViewModel: ObservableObject {
     @Published var isSending: Bool = false
     @Published var isUpdatingPlan: Bool = false
     @Published var errorMessage: String?
+    @Published var lastSendFailed: Bool = false
 
     private let tripId: UUID
     private let apiClient: TripPlanningAPIClient
 
+    // Store last message for retry
+    private var lastFailedMessageText: String?
+
     /// Callback to trigger plan update in parent view model
-    var onPlanUpdateRequested: (() async -> Void)?
+    /// Returns true if update succeeded
+    var onPlanUpdateRequested: (() async -> Bool)?
 
     init(
         tripId: UUID,
         initialMessages: [ChatMessage] = [],
         apiClient: TripPlanningAPIClient = .shared,
-        onPlanUpdateRequested: (() async -> Void)? = nil
+        onPlanUpdateRequested: (() async -> Bool)? = nil
     ) {
         self.tripId = tripId
         self.apiClient = apiClient
@@ -52,6 +57,9 @@ final class ChatViewModel: ObservableObject {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else { return }
 
+        // Store for potential retry
+        lastFailedMessageText = trimmedText
+
         // Add user message to chat
         let userMessage = ChatMessage(
             id: UUID(),
@@ -64,6 +72,9 @@ final class ChatViewModel: ObservableObject {
         // Set loading state
         isSending = true
         errorMessage = nil
+        lastSendFailed = false
+
+        defer { isSending = false }
 
         print("💬 Sending message to backend for trip: \(tripId)")
 
@@ -73,6 +84,9 @@ final class ChatViewModel: ObservableObject {
                 tripId: tripId,
                 message: trimmedText
             )
+
+            // Clear failed message on success
+            lastFailedMessageText = nil
 
             // Add assistant message to chat
             let assistantMessage = ChatMessage(
@@ -85,27 +99,43 @@ final class ChatViewModel: ObservableObject {
 
             print("✅ Chat response received: \(response.assistantMessage.prefix(50))...")
 
-            // Optionally: store updated trip data from response
-            // response.trip contains the updated trip preferences
-            // You could emit this to another observer if needed
-
         } catch {
             // Handle error
-            let errorDescription = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            let errorDescription = (error as? LocalizedError)?.errorDescription
+                ?? "Что-то пошло не так. Попробуйте ещё раз."
             self.errorMessage = errorDescription
+            self.lastSendFailed = true
             print("❌ Chat error: \(errorDescription)")
 
-            // Optionally: add an error message to chat
+            // Add error message to chat with retry hint
             let errorChatMessage = ChatMessage(
                 id: UUID(),
-                text: "❌ Произошла ошибка: \(errorDescription)",
+                text: "Не удалось отправить сообщение. Проверьте соединение и попробуйте ещё раз.",
                 isFromUser: false,
                 timestamp: Date()
             )
             messages.append(errorChatMessage)
         }
+    }
 
-        isSending = false
+    /// Retry sending the last failed message
+    @MainActor
+    func retrySendMessage() async {
+        guard let lastText = lastFailedMessageText else { return }
+
+        // Remove the last error message if present
+        if let lastMessage = messages.last, !lastMessage.isFromUser,
+           lastMessage.text.contains("Не удалось") {
+            messages.removeLast()
+        }
+
+        // Remove the failed user message
+        if let lastUserMessage = messages.last, lastUserMessage.isFromUser {
+            messages.removeLast()
+        }
+
+        // Retry with same text
+        await sendMessage(lastText)
     }
 
     /// Request plan update based on chat preferences
@@ -117,21 +147,35 @@ final class ChatViewModel: ObservableObject {
         }
 
         isUpdatingPlan = true
+        errorMessage = nil
+
+        defer { isUpdatingPlan = false }
+
         print("🔄 Requesting plan update...")
 
-        // Call the parent's update method
-        await onPlanUpdateRequested()
+        // Call the parent's update method and check result
+        let success = await onPlanUpdateRequested()
 
-        // Add a system message to confirm
-        let systemMessage = ChatMessage(
-            id: UUID(),
-            text: "✅ Маршрут обновлён с учётом ваших пожеланий. Вернитесь к экрану маршрута, чтобы увидеть изменения.",
-            isFromUser: false,
-            timestamp: Date()
-        )
-        messages.append(systemMessage)
-
-        isUpdatingPlan = false
-        print("✅ Plan update completed")
+        if success {
+            // Add success message
+            let systemMessage = ChatMessage(
+                id: UUID(),
+                text: "✅ Маршрут обновлён с учётом ваших пожеланий. Вернитесь к экрану маршрута, чтобы увидеть изменения.",
+                isFromUser: false,
+                timestamp: Date()
+            )
+            messages.append(systemMessage)
+            print("✅ Plan update completed")
+        } else {
+            // Add error message with retry hint
+            let errorChatMessage = ChatMessage(
+                id: UUID(),
+                text: "Не удалось обновить маршрут. Нажмите кнопку обновления ещё раз.",
+                isFromUser: false,
+                timestamp: Date()
+            )
+            messages.append(errorChatMessage)
+            print("❌ Plan update failed")
+        }
     }
 }

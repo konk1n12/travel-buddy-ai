@@ -13,16 +13,82 @@ final class TripPlanViewModel: ObservableObject {
         case map
     }
 
+    /// Result of last plan update attempt (for chat rebuild)
+    enum UpdateResult {
+        case none
+        case success
+        case failure(String)
+    }
+
     @Published var plan: TripPlan?
     @Published var selectedTab: TripPlanTab = .route
     @Published var selectedDayIndex: Int = 0
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
+    @Published var lastUpdateResult: UpdateResult = .none
 
     private let apiClient: TripPlanningAPIClient
 
+    // Store last generation parameters for retry
+    private var lastGenerationParams: GenerationParams?
+
+    struct GenerationParams {
+        let destinationCity: String
+        let startDate: Date
+        let endDate: Date
+        let selectedInterests: [String]
+        let budgetLevel: String
+        let travellersCount: Int
+        let pace: String
+    }
+
     init(apiClient: TripPlanningAPIClient = .shared) {
         self.apiClient = apiClient
+    }
+
+    /// Whether an error is currently displayed
+    var hasError: Bool {
+        errorMessage != nil
+    }
+
+    /// Clear current error
+    func clearError() {
+        errorMessage = nil
+    }
+
+    /// Retry last failed generation
+    @MainActor
+    func retryLastGeneration() async {
+        guard let params = lastGenerationParams else { return }
+        await generatePlan(
+            destinationCity: params.destinationCity,
+            startDate: params.startDate,
+            endDate: params.endDate,
+            selectedInterests: params.selectedInterests,
+            budgetLevel: params.budgetLevel,
+            travellersCount: params.travellersCount,
+            pace: params.pace
+        )
+    }
+
+    // MARK: - Computed Properties
+
+    /// Currently selected day from the plan
+    var currentDay: TripDay? {
+        guard let plan = plan,
+              selectedDayIndex >= 0,
+              selectedDayIndex < plan.days.count else { return nil }
+        return plan.days[selectedDayIndex]
+    }
+
+    /// Activities for the currently selected day
+    var currentDayActivities: [TripActivity] {
+        currentDay?.activities ?? []
+    }
+
+    /// Activities with valid coordinates for the currently selected day
+    var currentDayActivitiesWithCoordinates: [TripActivity] {
+        currentDayActivities.filter { $0.hasCoordinates }
     }
 
     // MARK: - Backend Integration
@@ -38,8 +104,21 @@ final class TripPlanViewModel: ObservableObject {
         travellersCount: Int,
         pace: String = "medium"
     ) async {
+        // Store parameters for potential retry
+        lastGenerationParams = GenerationParams(
+            destinationCity: destinationCity,
+            startDate: startDate,
+            endDate: endDate,
+            selectedInterests: selectedInterests,
+            budgetLevel: budgetLevel,
+            travellersCount: travellersCount,
+            pace: pace
+        )
+
         isLoading = true
         errorMessage = nil
+
+        defer { isLoading = false }
 
         print("🚀 Starting trip plan generation for \(destinationCity)")
 
@@ -78,12 +157,11 @@ final class TripPlanViewModel: ObservableObject {
                 travelersCount: travellersCount
             )
 
-            isLoading = false
             print("🎉 Trip plan successfully generated!")
 
         } catch {
-            self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            isLoading = false
+            self.errorMessage = (error as? LocalizedError)?.errorDescription
+                ?? "Что-то пошло не так. Попробуйте ещё раз."
             print("❌ Error generating plan: \(self.errorMessage ?? "Unknown error")")
         }
     }
@@ -129,15 +207,20 @@ final class TripPlanViewModel: ObservableObject {
     }
 
     /// Update plan from chat (re-run planning pipeline for existing trip)
+    /// Returns true if update succeeded, false otherwise
     @MainActor
-    func updatePlanFromChat() async {
+    func updatePlanFromChat() async -> Bool {
         guard let currentPlan = plan else {
             errorMessage = "Нет активного маршрута для обновления"
-            return
+            lastUpdateResult = .failure("Нет активного маршрута для обновления")
+            return false
         }
 
         isLoading = true
         errorMessage = nil
+        lastUpdateResult = .none
+
+        defer { isLoading = false }
 
         print("🔄 Updating trip plan for trip: \(currentPlan.tripId)")
 
@@ -161,13 +244,17 @@ final class TripPlanViewModel: ObservableObject {
                 travelersCount: currentPlan.travellersCount
             )
 
-            isLoading = false
+            lastUpdateResult = .success
             print("🎉 Trip plan successfully updated!")
+            return true
 
         } catch {
-            self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            isLoading = false
-            print("❌ Error updating plan: \(self.errorMessage ?? "Unknown error")")
+            let errorMsg = (error as? LocalizedError)?.errorDescription
+                ?? "Что-то пошло не так. Попробуйте ещё раз."
+            self.errorMessage = errorMsg
+            lastUpdateResult = .failure(errorMsg)
+            print("❌ Error updating plan: \(errorMsg)")
+            return false
         }
     }
 
@@ -235,12 +322,13 @@ final class TripPlanViewModel: ObservableObject {
     }
     
     private static func dayActivities(for index: Int, city: String) -> [TripActivity] {
-        let templates: [(String, String, String, TripActivityCategory)] = [
-            ("10:00", "Завтрак в Van Kahvalti", "Уютное кафе с лучшими завтраками недалеко от центра.", .food),
-            ("11:30", "Прогулка по Галатскому мосту", "Собираем атмосферные виды на Золотой Рог.", .walk),
-            ("14:00", "Собор Святой Ирины", "Историческое место с мягким светом и камерной атмосферой.", .museum),
-            ("17:30", "Чай в Çinaraltı", "Перерыв на чай у Босфора.", .food),
-            ("19:30", "Rooftop-бар Mikla", "Закатный вид на \(city) и авторские коктейли.", .nightlife)
+        // Mock templates with sample Istanbul coordinates
+        let templates: [(String, String, String, TripActivityCategory, Double, Double)] = [
+            ("10:00", "Завтрак в Van Kahvalti", "Уютное кафе с лучшими завтраками недалеко от центра.", .food, 41.0082, 28.9784),
+            ("11:30", "Прогулка по Галатскому мосту", "Собираем атмосферные виды на Золотой Рог.", .walk, 41.0198, 28.9731),
+            ("14:00", "Собор Святой Ирины", "Историческое место с мягким светом и камерной атмосферой.", .museum, 41.0086, 28.9802),
+            ("17:30", "Чай в Çinaraltı", "Перерыв на чай у Босфора.", .food, 41.0333, 29.0333),
+            ("19:30", "Rooftop-бар Mikla", "Закатный вид на \(city) и авторские коктейли.", .nightlife, 41.0251, 28.9756)
         ]
         return templates.enumerated().map { offset, item in
             TripActivity(
@@ -250,7 +338,10 @@ final class TripPlanViewModel: ObservableObject {
                 description: item.2,
                 category: item.3,
                 address: nil,
-                note: offset == templates.count - 1 ? "Рекомендуется бронирование" : nil
+                note: offset == templates.count - 1 ? "Рекомендуется бронирование" : nil,
+                latitude: item.4,
+                longitude: item.5,
+                travelPolyline: nil  // No polylines in mock data
             )
         }
     }
