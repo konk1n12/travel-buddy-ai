@@ -121,6 +121,8 @@ final class TripPlanViewModel: ObservableObject {
         defer { isLoading = false }
 
         print("🚀 Starting trip plan generation for \(destinationCity)")
+        print("🔧 API Client: \(type(of: apiClient))")
+        print("🔧 Base URL: \(AppConfig.baseURL)")
 
         do {
             // 1. Create trip request DTO
@@ -160,6 +162,11 @@ final class TripPlanViewModel: ObservableObject {
             print("🎉 Trip plan successfully generated!")
 
         } catch {
+            print("❌ Raw error: \(error)")
+            print("❌ Error type: \(type(of: error))")
+            if let apiError = error as? APIError {
+                print("❌ APIError details: \(apiError)")
+            }
             self.errorMessage = (error as? LocalizedError)?.errorDescription
                 ?? "Что-то пошло не так. Попробуйте ещё раз."
             print("❌ Error generating plan: \(self.errorMessage ?? "Unknown error")")
@@ -258,91 +265,4 @@ final class TripPlanViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Mock Generation (Fallback)
-
-    /// Generate mock trip plan (for testing/fallback)
-    func generateMockPlan(
-        destinationCity: String,
-        startDate: Date,
-        endDate: Date,
-        selectedInterests: [String],
-        budgetLevel: String,
-        travellersCount: Int
-    ) {
-        let normalizedInterests = TripPlanViewModel.interestsSummary(from: selectedInterests)
-        plan = TripPlan(
-            tripId: UUID(), // Generate random UUID for mock plan
-            destinationCity: destinationCity,
-            startDate: startDate,
-            endDate: endDate,
-            days: TripPlanViewModel.generateDays(
-                startDate: startDate,
-                endDate: endDate,
-                destinationCity: destinationCity,
-                interests: normalizedInterests
-            ),
-            travellersCount: max(travellersCount, 1),
-            comfortLevel: budgetLevel,
-            interestsSummary: normalizedInterests
-        )
-    }
-    
-    private static func interestsSummary(from interests: [String]) -> String {
-        guard !interests.isEmpty else { return "классика, прогулки" }
-        return interests
-            .map { $0.lowercased() }
-            .joined(separator: ", ")
-    }
-    
-    private static func generateDays(startDate: Date, endDate: Date, destinationCity: String, interests: String) -> [TripDay] {
-        let calendar = Calendar.current
-        let daysCount = max(calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0, 0) + 1
-        return (0..<daysCount).map { index -> TripDay in
-            let date = calendar.date(byAdding: .day, value: index, to: startDate) ?? startDate
-            return TripDay(
-                index: index + 1,
-                date: date,
-                title: dayTitle(for: index + 1, city: destinationCity),
-                summary: daySummary(for: index + 1, interests: interests),
-                activities: dayActivities(for: index + 1, city: destinationCity)
-            )
-        }
-    }
-    
-    private static func dayTitle(for index: Int, city: String) -> String {
-        switch index % 3 {
-        case 1: return "Знакомство с \(city)"
-        case 2: return "Ритм локальных районов"
-        default: return "Лучшие виды и вечер"
-        }
-    }
-    
-    private static func daySummary(for index: Int, interests: String) -> String {
-        "Фокус на интересы: \(interests). День №\(index)."
-    }
-    
-    private static func dayActivities(for index: Int, city: String) -> [TripActivity] {
-        // Mock templates with sample Istanbul coordinates
-        let templates: [(String, String, String, TripActivityCategory, Double, Double)] = [
-            ("10:00", "Завтрак в Van Kahvalti", "Уютное кафе с лучшими завтраками недалеко от центра.", .food, 41.0082, 28.9784),
-            ("11:30", "Прогулка по Галатскому мосту", "Собираем атмосферные виды на Золотой Рог.", .walk, 41.0198, 28.9731),
-            ("14:00", "Собор Святой Ирины", "Историческое место с мягким светом и камерной атмосферой.", .museum, 41.0086, 28.9802),
-            ("17:30", "Чай в Çinaraltı", "Перерыв на чай у Босфора.", .food, 41.0333, 29.0333),
-            ("19:30", "Rooftop-бар Mikla", "Закатный вид на \(city) и авторские коктейли.", .nightlife, 41.0251, 28.9756)
-        ]
-        return templates.enumerated().map { offset, item in
-            TripActivity(
-                id: UUID(),
-                time: item.0,
-                title: item.1,
-                description: item.2,
-                category: item.3,
-                address: nil,
-                note: offset == templates.count - 1 ? "Рекомендуется бронирование" : nil,
-                latitude: item.4,
-                longitude: item.5,
-                travelPolyline: nil  // No polylines in mock data
-            )
-        }
-    }
 }
