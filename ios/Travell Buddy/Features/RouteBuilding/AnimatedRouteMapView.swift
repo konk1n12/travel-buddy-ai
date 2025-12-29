@@ -24,7 +24,7 @@ struct AnimatedRouteMapView: UIViewRepresentable {
 
     // 3D camera settings
     private static let cameraPitch: Double = 45 // Tilt angle for 3D effect
-    private static let cameraAltitude: Double = 800 // Initial altitude in meters
+    private static let cameraAltitude: Double = 3000 // Initial altitude in meters (balanced view)
 
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
@@ -104,10 +104,10 @@ struct AnimatedRouteMapView: UIViewRepresentable {
         context.coordinator.lastPOICount = currentCount
 
         // Calculate new camera distance based on POI count
-        // Start close, gradually zoom out
-        let baseAltitude: Double = 600
-        let altitudeIncrement: Double = 150
-        let maxAltitude: Double = 2500
+        // Start with balanced city view, gradually zoom out
+        let baseAltitude: Double = 3000
+        let altitudeIncrement: Double = 200
+        let maxAltitude: Double = 5000
         let newAltitude = min(baseAltitude + Double(currentCount) * altitudeIncrement, maxAltitude)
 
         // Slowly rotate camera heading for dynamic effect
