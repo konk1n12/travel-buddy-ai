@@ -13,7 +13,15 @@
       "Bash(cd /Users/denosadchiy/Desktop/Travel\\\\ Buddy\\\\ Ai && TRIP_CHAT_MODEL=\"mistralai/Mistral-Nemo-Instruct-2407\" make check-google-places:*)",
       "Bash(cd /Users/denosadchiy/Desktop/Travel\\\\ Buddy\\\\ Ai && TRIP_CHAT_MODEL=\"mistralai/Mistral-Nemo-Instruct-2407\" make check-google-routes:*)",
       "Bash(cd /Users/denosadchiy/Desktop/Travel\\\\ Buddy\\\\ Ai && TRIP_CHAT_MODEL=\"mistralai/Mistral-Nemo-Instruct-2407\" make check-externals:*)",
-      "Bash(xcodebuild:*)"
+      "Bash(xcodebuild:*)",
+      "Bash(cd /Users/denosadchiy/Desktop/Travel\\\\ Buddy\\\\ Ai && python3 -m pytest:*)",
+      "Bash(cd /Users/denosadchiy/Desktop/Travel\\\\ Buddy\\\\ Ai && python3:*)",
+      "Bash(pip3 list:*)",
+      "Bash(python3 -c \"\nimport ast\nwith open\\(''tests/test_poi_selection_llm.py''\\) as f:\n    code = f.read\\(\\)\ntry:\n    ast.parse\\(code\\)\n    print\\(''✅ Syntax is valid''\\)\nexcept SyntaxError as e:\n    print\\(f''❌ Syntax error: {e}''\\)\n\")",
+      "Bash(python3 -c \"\nimport ast\nfiles = [\n    ''src/application/poi_selection_llm.py'',\n    ''src/application/poi_planner.py'',\n    ''src/infrastructure/llm_client.py'',\n]\nfor f in files:\n    try:\n        with open\\(f\\) as file:\n            ast.parse\\(file.read\\(\\)\\)\n        print\\(f''✅ {f}''\\)\n    except SyntaxError as e:\n        print\\(f''❌ {f}: {e}''\\)\n    except FileNotFoundError:\n        print\\(f''⚠️ {f}: File not found''\\)\n\")",
+      "Bash(python3 -c \"\nimport ast\nfor f in [''tests/test_poi_plan.py'', ''tests/test_poi_selection_llm.py'']:\n    try:\n        with open\\(f\\) as file:\n            ast.parse\\(file.read\\(\\)\\)\n        print\\(f''✅ {f}''\\)\n    except SyntaxError as e:\n        print\\(f''❌ {f}: {e}''\\)\n\")",
+      "Bash(python3:*)",
+      "Bash(cat:*)"
     ]
   }
 }

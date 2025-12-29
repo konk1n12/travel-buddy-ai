@@ -2,6 +2,7 @@
 TripSpec Collector service.
 Handles creation and updating of TripSpec from form inputs.
 """
+import logging
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -12,6 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.domain.models import TripSpec, DailyRoutine
 from src.domain.schemas import TripCreateRequest, TripUpdateRequest, TripResponse, DailyRoutineResponse
 from src.infrastructure.models import TripModel
+from src.infrastructure.geocoding import get_geocoding_service
+
+logger = logging.getLogger(__name__)
 
 
 class TripSpecCollector:
@@ -57,6 +61,8 @@ class TripSpecCollector:
         return TripResponse(
             id=trip_model.id,
             city=trip_model.city,
+            city_center_lat=trip_model.city_center_lat,
+            city_center_lon=trip_model.city_center_lon,
             start_date=trip_model.start_date,
             end_date=trip_model.end_date,
             num_travelers=trip_model.num_travelers,
@@ -71,6 +77,8 @@ class TripSpecCollector:
                 dinner_window=daily_routine.dinner_window,
             ),
             hotel_location=trip_model.hotel_location,
+            hotel_lat=trip_model.hotel_lat,
+            hotel_lon=trip_model.hotel_lon,
             additional_preferences=trip_model.additional_preferences,
             created_at=trip_model.created_at.isoformat() + "Z",
             updated_at=trip_model.updated_at.isoformat() + "Z",
@@ -103,9 +111,43 @@ class TripSpecCollector:
         else:
             daily_routine = DailyRoutine()
 
+        # Geocode city to get coordinates
+        city_center_lat = None
+        city_center_lon = None
+        geocoding_service = get_geocoding_service()
+        try:
+            geocoding_result = await geocoding_service.geocode_city(request.city)
+            if geocoding_result:
+                city_center_lat = geocoding_result.lat
+                city_center_lon = geocoding_result.lon
+                logger.info(f"Geocoded city '{request.city}' to ({city_center_lat}, {city_center_lon})")
+            else:
+                logger.warning(f"Could not geocode city '{request.city}', proceeding without coordinates")
+        except Exception as e:
+            logger.error(f"Error geocoding city '{request.city}': {e}")
+
+        # Geocode hotel location to get coordinates
+        hotel_lat = None
+        hotel_lon = None
+        if request.hotel_location:
+            try:
+                # Geocode hotel with city context for better accuracy
+                hotel_query = f"{request.hotel_location}, {request.city}"
+                hotel_result = await geocoding_service.geocode_city(hotel_query)
+                if hotel_result:
+                    hotel_lat = hotel_result.lat
+                    hotel_lon = hotel_result.lon
+                    logger.info(f"Geocoded hotel '{request.hotel_location}' to ({hotel_lat}, {hotel_lon})")
+                else:
+                    logger.warning(f"Could not geocode hotel '{request.hotel_location}'")
+            except Exception as e:
+                logger.error(f"Error geocoding hotel '{request.hotel_location}': {e}")
+
         # Create TripModel (ORM)
         trip_model = TripModel(
             city=request.city,
+            city_center_lat=city_center_lat,
+            city_center_lon=city_center_lon,
             start_date=request.start_date,
             end_date=request.end_date,
             num_travelers=request.num_travelers,
@@ -114,6 +156,8 @@ class TripSpecCollector:
             interests=request.interests,
             daily_routine=self._daily_routine_to_dict(daily_routine),
             hotel_location=request.hotel_location,
+            hotel_lat=hotel_lat,
+            hotel_lon=hotel_lon,
             additional_preferences={},
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
@@ -177,8 +221,22 @@ class TripSpecCollector:
             return None
 
         # Update fields if provided
-        if request.city is not None:
+        if request.city is not None and request.city != trip_model.city:
             trip_model.city = request.city
+            # Re-geocode when city changes
+            try:
+                geocoding_service = get_geocoding_service()
+                geocoding_result = await geocoding_service.geocode_city(request.city)
+                if geocoding_result:
+                    trip_model.city_center_lat = geocoding_result.lat
+                    trip_model.city_center_lon = geocoding_result.lon
+                    logger.info(f"Re-geocoded city '{request.city}' to ({geocoding_result.lat}, {geocoding_result.lon})")
+                else:
+                    trip_model.city_center_lat = None
+                    trip_model.city_center_lon = None
+                    logger.warning(f"Could not re-geocode city '{request.city}'")
+            except Exception as e:
+                logger.error(f"Error re-geocoding city '{request.city}': {e}")
         if request.start_date is not None:
             trip_model.start_date = request.start_date
         if request.end_date is not None:
@@ -193,6 +251,26 @@ class TripSpecCollector:
             trip_model.interests = request.interests
         if request.hotel_location is not None:
             trip_model.hotel_location = request.hotel_location
+            # Re-geocode hotel when it changes
+            if request.hotel_location:
+                try:
+                    geocoding_service = get_geocoding_service()
+                    hotel_query = f"{request.hotel_location}, {trip_model.city}"
+                    hotel_result = await geocoding_service.geocode_city(hotel_query)
+                    if hotel_result:
+                        trip_model.hotel_lat = hotel_result.lat
+                        trip_model.hotel_lon = hotel_result.lon
+                        logger.info(f"Re-geocoded hotel '{request.hotel_location}' to ({hotel_result.lat}, {hotel_result.lon})")
+                    else:
+                        trip_model.hotel_lat = None
+                        trip_model.hotel_lon = None
+                        logger.warning(f"Could not re-geocode hotel '{request.hotel_location}'")
+                except Exception as e:
+                    logger.error(f"Error re-geocoding hotel '{request.hotel_location}': {e}")
+            else:
+                # Hotel location cleared
+                trip_model.hotel_lat = None
+                trip_model.hotel_lon = None
         if request.additional_preferences is not None:
             trip_model.additional_preferences = request.additional_preferences
 

@@ -16,6 +16,8 @@ class TripModel(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     city = Column(String, nullable=False)
+    city_center_lat = Column(Float, nullable=True)
+    city_center_lon = Column(Float, nullable=True)
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
     num_travelers = Column(Integer, nullable=False, default=1)
@@ -26,6 +28,8 @@ class TripModel(Base):
 
     daily_routine = Column(JSON, nullable=False)
     hotel_location = Column(String, nullable=True)
+    hotel_lat = Column(Float, nullable=True)
+    hotel_lon = Column(Float, nullable=True)
     additional_preferences = Column(JSON, nullable=False, default=dict)
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

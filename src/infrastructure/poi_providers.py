@@ -3,6 +3,7 @@ POI Provider abstraction and implementations.
 Supports both internal DB and external API sources for POI discovery.
 """
 import logging
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,10 +15,42 @@ from sqlalchemy import select, or_, and_, String
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.domain.models import POICandidate, BudgetLevel
+from src.domain.models import POICandidate, BudgetLevel, BlockType
 from src.infrastructure.models import POIModel
 
 logger = logging.getLogger(__name__)
+
+# Default maximum radius from city center (km)
+DEFAULT_MAX_RADIUS_KM = 20.0
+
+
+def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Calculate the great-circle distance between two points on Earth in kilometers.
+
+    Uses the Haversine formula.
+
+    Args:
+        lat1, lon1: Latitude and longitude of first point (degrees)
+        lat2, lon2: Latitude and longitude of second point (degrees)
+
+    Returns:
+        Distance in kilometers
+    """
+    R = 6371.0  # Earth's radius in km
+
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(delta_lat / 2) ** 2 +
+        math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    return R * c
 
 
 # Google Places type mapping to our categories
@@ -58,6 +91,79 @@ PRICE_LEVEL_TO_BUDGET = {
     4: BudgetLevel.HIGH,   # Very Expensive
 }
 
+# BlockType to allowed Google Places types mapping
+# This ensures we only return POIs that match the expected block type
+BLOCK_TYPE_ALLOWED_GOOGLE_TYPES: dict[BlockType, set[str]] = {
+    BlockType.MEAL: {
+        "restaurant", "cafe", "bakery", "bar", "food",
+        "meal_delivery", "meal_takeaway",
+    },
+    BlockType.ACTIVITY: {
+        "tourist_attraction", "museum", "art_gallery", "park", "zoo",
+        "aquarium", "amusement_park", "stadium", "shopping_mall", "store",
+        "spa", "gym", "point_of_interest", "church", "hindu_temple",
+        "mosque", "synagogue", "library", "movie_theater", "bowling_alley",
+    },
+    BlockType.NIGHTLIFE: {
+        "night_club", "bar", "casino",
+    },
+}
+
+# BlockType to allowed internal categories mapping
+BLOCK_TYPE_ALLOWED_CATEGORIES: dict[BlockType, set[str]] = {
+    BlockType.MEAL: {"restaurant", "cafe", "bar", "bakery", "food"},
+    BlockType.ACTIVITY: {"museum", "attraction", "park", "shopping", "wellness"},
+    BlockType.NIGHTLIFE: {"nightlife", "bar"},
+}
+
+# Heuristic name-based filters for meal blocks
+# These keywords in POI names indicate the place is NOT suitable for meals
+MEAL_EXCLUDE_NAME_KEYWORDS = {
+    "class", "classes", "school", "course", "courses", "workshop",
+    "lesson", "lessons", "tour", "tours", "cooking class", "wine tasting class",
+    "academy", "institute", "training", "education",
+}
+
+
+def is_poi_suitable_for_block_type(
+    poi_name: str,
+    poi_category: str,
+    poi_tags: list[str],
+    block_type: BlockType,
+) -> bool:
+    """
+    Check if a POI is suitable for a given block type.
+
+    Args:
+        poi_name: Name of the POI
+        poi_category: POI category
+        poi_tags: POI tags (Google types or internal tags)
+        block_type: Type of block (MEAL, ACTIVITY, NIGHTLIFE, etc.)
+
+    Returns:
+        True if the POI is suitable for the block type
+    """
+    # REST and TRAVEL blocks don't need POIs
+    if block_type in (BlockType.REST, BlockType.TRAVEL):
+        return True
+
+    # Check category allowlist
+    allowed_categories = BLOCK_TYPE_ALLOWED_CATEGORIES.get(block_type)
+    if allowed_categories and poi_category not in allowed_categories:
+        # Also check if any tag matches
+        if not any(tag in allowed_categories for tag in poi_tags):
+            return False
+
+    # For meals, apply heuristic name-based filtering
+    if block_type == BlockType.MEAL:
+        name_lower = poi_name.lower()
+        for keyword in MEAL_EXCLUDE_NAME_KEYWORDS:
+            if keyword in name_lower:
+                logger.debug(f"Excluding '{poi_name}' from meals due to keyword '{keyword}'")
+                return False
+
+    return True
+
 
 @dataclass
 class GooglePlaceResult:
@@ -83,6 +189,10 @@ class POIProvider(ABC):
         budget: Optional[BudgetLevel] = None,
         limit: int = 10,
         center_location: Optional[str] = None,
+        city_center_lat: Optional[float] = None,
+        city_center_lon: Optional[float] = None,
+        max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
+        block_type: Optional[BlockType] = None,
     ) -> list[POICandidate]:
         """
         Search for POIs matching criteria.
@@ -93,6 +203,10 @@ class POIProvider(ABC):
             budget: Budget level (low, medium, high)
             limit: Maximum number of results
             center_location: Optional center point for proximity search
+            city_center_lat: City center latitude for radius filtering
+            city_center_lon: City center longitude for radius filtering
+            max_radius_km: Maximum radius from city center in km (default: 20km)
+            block_type: Type of block (MEAL, ACTIVITY, etc.) for category filtering
 
         Returns:
             List of POICandidate objects, ranked by relevance
@@ -177,8 +291,12 @@ class DBPOIProvider(POIProvider):
         budget: Optional[BudgetLevel] = None,
         limit: int = 10,
         center_location: Optional[str] = None,
+        city_center_lat: Optional[float] = None,
+        city_center_lon: Optional[float] = None,
+        max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
+        block_type: Optional[BlockType] = None,
     ) -> list[POICandidate]:
-        """Search internal database for matching POIs."""
+        """Search internal database for matching POIs with radius and category filtering."""
         if not desired_categories:
             return []
 
@@ -201,10 +319,32 @@ class DBPOIProvider(POIProvider):
         result = await self.db.execute(query)
         poi_models = result.scalars().all()
 
+        # Apply post-query filtering
+        filtered_pois = []
+        has_city_center = city_center_lat is not None and city_center_lon is not None
+
+        for poi in poi_models:
+            # Radius filtering: skip POIs outside max radius
+            if has_city_center and poi.lat is not None and poi.lon is not None:
+                distance_km = haversine_distance_km(
+                    city_center_lat, city_center_lon, poi.lat, poi.lon
+                )
+                if distance_km > max_radius_km:
+                    logger.debug(f"Excluding POI '{poi.name}' - {distance_km:.1f}km from city center")
+                    continue
+
+            # BlockType filtering: skip POIs that don't match the block type
+            if block_type and not is_poi_suitable_for_block_type(
+                poi.name, poi.category, poi.tags or [], block_type
+            ):
+                continue
+
+            filtered_pois.append(poi)
+
         # Score and rank
         scored_pois = [
             (poi, self._calculate_relevance_score(poi, desired_categories, budget))
-            for poi in poi_models
+            for poi in filtered_pois
         ]
         scored_pois.sort(key=lambda x: x[1], reverse=True)
 
@@ -463,11 +603,16 @@ class GooglePlacesPOIProvider(POIProvider):
         budget: Optional[BudgetLevel] = None,
         limit: int = 10,
         center_location: Optional[str] = None,
+        city_center_lat: Optional[float] = None,
+        city_center_lon: Optional[float] = None,
+        max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
+        block_type: Optional[BlockType] = None,
     ) -> list[POICandidate]:
         """
         Search Google Places API for POIs and cache results.
 
         Returns POICandidate objects with database IDs after caching.
+        Applies radius and block type filtering.
         """
         if not desired_categories:
             return []
@@ -476,16 +621,36 @@ class GooglePlacesPOIProvider(POIProvider):
         places = await self._fetch_from_google(
             city=city,
             desired_categories=desired_categories,
-            limit=limit * 2,  # Fetch more to allow for filtering
+            limit=limit * 3,  # Fetch more to allow for filtering
             center_location=center_location,
         )
 
         if not places:
             return []
 
-        # Cache to database and build candidates
+        has_city_center = city_center_lat is not None and city_center_lon is not None
+
+        # Cache to database and build candidates (with filtering)
         candidates = []
         for place in places:
+            # Radius filtering: skip places outside max radius
+            if has_city_center:
+                distance_km = haversine_distance_km(
+                    city_center_lat, city_center_lon, place.lat, place.lon
+                )
+                if distance_km > max_radius_km:
+                    logger.debug(f"Excluding Google Place '{place.name}' - {distance_km:.1f}km from city center")
+                    continue
+
+            # Map to category
+            category = self._map_google_types_to_category(place.types, desired_categories)
+
+            # BlockType filtering: skip places that don't match the block type
+            if block_type and not is_poi_suitable_for_block_type(
+                place.name, category, place.types, block_type
+            ):
+                continue
+
             # Cache to DB
             poi_model = await self._cache_place_to_db(place, city, desired_categories)
 
@@ -496,7 +661,7 @@ class GooglePlacesPOIProvider(POIProvider):
             candidate = POICandidate(
                 poi_id=poi_model.id,
                 name=place.name,
-                category=self._map_google_types_to_category(place.types, desired_categories),
+                category=category,
                 tags=place.types,
                 rating=place.rating,
                 location=place.formatted_address,
@@ -546,12 +711,16 @@ class CompositePOIProvider(POIProvider):
         budget: Optional[BudgetLevel] = None,
         limit: int = 10,
         center_location: Optional[str] = None,
+        city_center_lat: Optional[float] = None,
+        city_center_lon: Optional[float] = None,
+        max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
+        block_type: Optional[BlockType] = None,
     ) -> list[POICandidate]:
         """
-        Search POIs using composite strategy.
+        Search POIs using composite strategy with radius and block type filtering.
 
         Strategy:
-        1. Query internal DB first
+        1. Query internal DB first (with filtering)
         2. If results < limit and external provider available, fetch more from Google
         3. External results are automatically cached to DB
         4. Merge and deduplicate results
@@ -564,6 +733,10 @@ class CompositePOIProvider(POIProvider):
             budget=budget,
             limit=limit,
             center_location=center_location,
+            city_center_lat=city_center_lat,
+            city_center_lon=city_center_lon,
+            max_radius_km=max_radius_km,
+            block_type=block_type,
         )
 
         logger.debug(f"DB returned {len(db_results)} POIs for {city}")
@@ -582,6 +755,10 @@ class CompositePOIProvider(POIProvider):
                 budget=budget,
                 limit=remaining_needed + 5,  # Fetch a few extra for deduplication
                 center_location=center_location,
+                city_center_lat=city_center_lat,
+                city_center_lon=city_center_lon,
+                max_radius_km=max_radius_km,
+                block_type=block_type,
             )
             logger.debug(f"External API returned {len(external_results)} POIs")
         except Exception as e:

@@ -67,6 +67,8 @@ class TripSpec(BaseModel):
     """
     id: UUID = Field(default_factory=uuid4, description="Unique trip ID")
     city: str = Field(description="Destination city")
+    city_center_lat: Optional[float] = Field(default=None, description="City center latitude (geocoded)")
+    city_center_lon: Optional[float] = Field(default=None, description="City center longitude (geocoded)")
     start_date: dt.date = Field(description="Trip start date")
     end_date: dt.date = Field(description="Trip end date")
     num_travelers: int = Field(default=1, ge=1, description="Number of travelers")
@@ -77,6 +79,8 @@ class TripSpec(BaseModel):
 
     daily_routine: DailyRoutine = Field(default_factory=DailyRoutine, description="Daily routine preferences")
     hotel_location: Optional[str] = Field(default=None, description="Hotel location or address")
+    hotel_lat: Optional[float] = Field(default=None, description="Hotel latitude (geocoded from hotel_location)")
+    hotel_lon: Optional[float] = Field(default=None, description="Hotel longitude (geocoded from hotel_location)")
 
     additional_preferences: dict = Field(default_factory=dict, description="Additional preferences from chat")
 
@@ -124,6 +128,7 @@ class ItineraryBlock(BaseModel):
     travel_distance_meters: Optional[int] = Field(default=None, description="Travel distance from previous block in meters")
     travel_polyline: Optional[str] = Field(default=None, description="Encoded polyline for route visualization")
     notes: Optional[str] = Field(default=None, description="Additional notes")
+    geo_suboptimal: bool = Field(default=False, description="True if travel time exceeds max hop threshold")
 
 
 class ItineraryDay(BaseModel):

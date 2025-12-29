@@ -108,6 +108,8 @@ class TripResponse(BaseModel):
     """Response schema for trip data (TripSpec state)."""
     id: UUID = Field(description="Unique trip ID")
     city: str
+    city_center_lat: Optional[float] = Field(default=None, description="City center latitude")
+    city_center_lon: Optional[float] = Field(default=None, description="City center longitude")
     start_date: date
     end_date: date
     num_travelers: int
@@ -118,6 +120,8 @@ class TripResponse(BaseModel):
 
     daily_routine: DailyRoutineResponse
     hotel_location: Optional[str] = None
+    hotel_lat: Optional[float] = Field(default=None, description="Hotel latitude (geocoded)")
+    hotel_lon: Optional[float] = Field(default=None, description="Hotel longitude (geocoded)")
 
     additional_preferences: dict
 
@@ -143,6 +147,8 @@ class TripResponse(BaseModel):
                     "dinner_window": ["19:00:00", "22:00:00"]
                 },
                 "hotel_location": "Marais district, Paris",
+                "hotel_lat": 48.8566,
+                "hotel_lon": 2.3522,
                 "additional_preferences": {},
                 "created_at": "2024-01-15T10:30:00Z",
                 "updated_at": "2024-01-15T10:30:00Z"

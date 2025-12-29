@@ -69,6 +69,21 @@ class Settings(BaseSettings):
         description="Model for macro planning (more powerful for itinerary generation)"
     )
 
+    # LLM-based POI Selection (experimental feature)
+    # When enabled, uses LLM to select/re-rank POI candidates after deterministic filtering
+    use_llm_for_poi_selection: bool = Field(
+        default=False,
+        description="Enable LLM-assisted POI selection (default: off, uses deterministic ranking)"
+    )
+    poi_selection_model: str = Field(
+        default="",
+        description="Model for POI selection (defaults to trip_planning_model if empty)"
+    )
+    poi_selection_max_candidates: int = Field(
+        default=15,
+        description="Maximum candidates to send to LLM for POI selection (cost control)"
+    )
+
     # Google Maps Platform / Places API
     google_maps_api_key: Optional[str] = Field(
         default=None,
@@ -105,6 +120,44 @@ class Settings(BaseSettings):
     travel_time_provider: str = Field(
         default="simple",
         description="Travel time provider: 'simple' (heuristic) or 'google_maps'"
+    )
+
+    # =========================================================================
+    # Geo-Adequate Routing Settings
+    # =========================================================================
+
+    # Hotel Anchor: Bias first blocks of day toward hotel location
+    hotel_anchor_enabled: bool = Field(
+        default=True,
+        description="Enable hotel anchor bias for first blocks of day"
+    )
+    hotel_anchor_blocks: int = Field(
+        default=2,
+        description="Number of first blocks per day to apply hotel proximity bias"
+    )
+    hotel_anchor_distance_weight: float = Field(
+        default=0.5,
+        description="Weight for distance penalty: score = rank_score - weight * distance_km"
+    )
+
+    # Daily Route Optimization: Reorder blocks within a day to minimize travel
+    enable_daily_route_optimization: bool = Field(
+        default=True,
+        description="Enable reordering of activity blocks to minimize travel time"
+    )
+    max_optimization_blocks_per_cluster: int = Field(
+        default=5,
+        description="Maximum number of contiguous blocks to consider for reordering (prevents factorial explosion)"
+    )
+
+    # Max Per-Hop Travel Time: Limit long travel between consecutive POIs
+    enable_travel_hop_limit: bool = Field(
+        default=True,
+        description="Enable maximum travel time constraint between consecutive POIs"
+    )
+    max_travel_minutes_per_hop: int = Field(
+        default=40,
+        description="Maximum allowed travel time in minutes between consecutive POIs"
     )
 
     # Server

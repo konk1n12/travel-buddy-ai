@@ -278,3 +278,244 @@ async def test_poi_planner_respects_block_types():
     for block in poi_plan.blocks:
         assert block.block_type in [BlockType.MEAL, BlockType.ACTIVITY, BlockType.NIGHTLIFE]
         # Rest and travel blocks should not be in poi_plan
+
+
+# ============================================================================
+# LLM-Assisted POI Selection Integration Tests
+# ============================================================================
+
+class MockPOISelectionLLMService:
+    """Mock POI selection LLM service for integration testing."""
+
+    def __init__(self, selection_strategy="first_n"):
+        """
+        Initialize mock service.
+
+        Args:
+            selection_strategy: "first_n" returns first N candidates,
+                               "reverse" returns last N candidates in reverse,
+                               "invalid_ids" returns invalid IDs to test fallback
+        """
+        self.selection_strategy = selection_strategy
+        self.calls = []
+
+    async def select_pois_for_block(
+        self,
+        trip_context,
+        day_context,
+        block_context,
+        candidates,
+        max_results=3,
+    ):
+        """Mock POI selection."""
+        self.calls.append({
+            "day_number": day_context.day_number,
+            "block_index": block_context.block_index,
+            "block_type": block_context.block_type,
+            "num_candidates": len(candidates),
+        })
+
+        if not candidates:
+            return []
+
+        if self.selection_strategy == "first_n":
+            return candidates[:max_results]
+        elif self.selection_strategy == "reverse":
+            return list(reversed(candidates))[:max_results]
+        elif self.selection_strategy == "empty":
+            # Return empty to trigger fallback
+            return []
+        else:
+            return candidates[:max_results]
+
+
+@pytest.mark.asyncio
+async def test_poi_planner_with_llm_selection_enabled():
+    """Test POI planner with LLM selection enabled uses the LLM service."""
+    from src.config import Settings
+
+    # Create mock settings with LLM selection enabled
+    mock_settings = Settings(
+        database_url="sqlite:///test.db",
+        ionet_api_key="test_key",
+        use_llm_for_poi_selection=True,
+    )
+
+    # Create trip and macro plan
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        trip_response = await client.post(
+            "/api/trips",
+            json={
+                "city": "Paris",
+                "start_date": "2024-12-01",
+                "end_date": "2024-12-02",
+                "interests": ["food", "culture"]
+            }
+        )
+        trip_id = trip_response.json()["id"]
+
+        from src.application import macro_planner
+        original_factory = macro_planner.get_macro_planning_llm_client
+        from tests.test_macro_plan import MockLLMClient, mock_macro_plan_response
+
+        macro_planner.get_macro_planning_llm_client = lambda: MockLLMClient(mock_macro_plan_response())
+
+        try:
+            await client.post(f"/api/trips/{trip_id}/macro-plan")
+        finally:
+            macro_planner.get_macro_planning_llm_client = original_factory
+
+    # Create mock LLM selection service
+    mock_llm_service = MockPOISelectionLLMService(selection_strategy="first_n")
+
+    # Test POI planner with LLM enabled
+    async with AsyncSessionLocal() as db:
+        planner = POIPlanner(
+            poi_selection_llm=mock_llm_service,
+            app_settings=mock_settings,
+        )
+        poi_plan = await planner.generate_poi_plan(trip_id, db)
+
+    # Verify LLM service was called for each block needing POIs
+    assert len(mock_llm_service.calls) > 0
+    assert poi_plan.trip_id == trip_id
+
+    # Verify all block types that need POIs had LLM called
+    for call in mock_llm_service.calls:
+        assert call["block_type"] in [BlockType.MEAL, BlockType.ACTIVITY, BlockType.NIGHTLIFE]
+
+
+@pytest.mark.asyncio
+async def test_poi_planner_deterministic_mode_skips_llm():
+    """Test POI planner in deterministic mode doesn't use LLM service."""
+    from src.config import Settings
+
+    # Create settings with LLM selection disabled
+    mock_settings = Settings(
+        database_url="sqlite:///test.db",
+        ionet_api_key="test_key",
+        use_llm_for_poi_selection=False,
+    )
+
+    # Create trip and macro plan
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        trip_response = await client.post(
+            "/api/trips",
+            json={
+                "city": "London",
+                "start_date": "2024-12-05",
+                "end_date": "2024-12-06",
+            }
+        )
+        trip_id = trip_response.json()["id"]
+
+        from src.application import macro_planner
+        original_factory = macro_planner.get_macro_planning_llm_client
+        from tests.test_macro_plan import MockLLMClient, mock_macro_plan_response
+
+        macro_planner.get_macro_planning_llm_client = lambda: MockLLMClient(mock_macro_plan_response())
+
+        try:
+            await client.post(f"/api/trips/{trip_id}/macro-plan")
+        finally:
+            macro_planner.get_macro_planning_llm_client = original_factory
+
+    # Create mock LLM service that should NOT be called
+    mock_llm_service = MockPOISelectionLLMService()
+
+    # Test POI planner with LLM disabled
+    async with AsyncSessionLocal() as db:
+        planner = POIPlanner(
+            poi_selection_llm=mock_llm_service,
+            app_settings=mock_settings,
+        )
+        poi_plan = await planner.generate_poi_plan(trip_id, db)
+
+    # Verify LLM service was NOT called
+    assert len(mock_llm_service.calls) == 0
+    assert poi_plan.trip_id == trip_id
+    assert len(poi_plan.blocks) > 0
+
+
+@pytest.mark.asyncio
+async def test_poi_planner_llm_fallback_on_empty_selection():
+    """Test POI planner falls back to deterministic when LLM returns empty."""
+    from src.config import Settings
+
+    mock_settings = Settings(
+        database_url="sqlite:///test.db",
+        ionet_api_key="test_key",
+        use_llm_for_poi_selection=True,
+    )
+
+    # Create trip and macro plan
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        trip_response = await client.post(
+            "/api/trips",
+            json={
+                "city": "Madrid",
+                "start_date": "2024-12-10",
+                "end_date": "2024-12-11",
+            }
+        )
+        trip_id = trip_response.json()["id"]
+
+        from src.application import macro_planner
+        original_factory = macro_planner.get_macro_planning_llm_client
+        from tests.test_macro_plan import MockLLMClient, mock_macro_plan_response
+
+        macro_planner.get_macro_planning_llm_client = lambda: MockLLMClient(mock_macro_plan_response())
+
+        try:
+            await client.post(f"/api/trips/{trip_id}/macro-plan")
+        finally:
+            macro_planner.get_macro_planning_llm_client = original_factory
+
+    # Mock LLM service that returns empty (should trigger fallback)
+    mock_llm_service = MockPOISelectionLLMService(selection_strategy="empty")
+
+    async with AsyncSessionLocal() as db:
+        planner = POIPlanner(
+            poi_selection_llm=mock_llm_service,
+            app_settings=mock_settings,
+        )
+        poi_plan = await planner.generate_poi_plan(trip_id, db)
+
+    # LLM was called but returned empty, so fallback to deterministic should work
+    assert len(mock_llm_service.calls) > 0
+    assert poi_plan.trip_id == trip_id
+    # Blocks should still have candidates from deterministic fallback
+    # (if POI data exists in DB)
+
+
+@pytest.mark.asyncio
+async def test_poi_planner_use_llm_selection_property():
+    """Test that use_llm_selection property reflects settings."""
+    from src.config import Settings
+
+    # Test with LLM enabled
+    settings_enabled = Settings(
+        database_url="sqlite:///test.db",
+        ionet_api_key="test_key",
+        use_llm_for_poi_selection=True,
+    )
+    planner_enabled = POIPlanner(app_settings=settings_enabled)
+    assert planner_enabled.use_llm_selection is True
+
+    # Test with LLM disabled
+    settings_disabled = Settings(
+        database_url="sqlite:///test.db",
+        ionet_api_key="test_key",
+        use_llm_for_poi_selection=False,
+    )
+    planner_disabled = POIPlanner(app_settings=settings_disabled)
+    assert planner_disabled.use_llm_selection is False
+
+
+@pytest.mark.asyncio
+async def test_poi_planner_candidates_per_block_constants():
+    """Test POI planner candidate constants are properly defined."""
+    # Test class constants
+    assert POIPlanner.CANDIDATES_PER_BLOCK == 3
+    assert POIPlanner.CANDIDATES_FOR_LLM_SELECTION == 10
+    assert POIPlanner.CANDIDATES_FOR_LLM_SELECTION > POIPlanner.CANDIDATES_PER_BLOCK

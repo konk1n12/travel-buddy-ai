@@ -372,3 +372,38 @@ def get_macro_planning_llm_client(app_settings: Optional[Settings] = None) -> LL
         return AnthropicLLMClient(model=s.trip_planning_model)
     else:
         raise ValueError(f"Unknown LLM provider: {s.llm_provider}. Use 'ionet' or 'anthropic'.")
+
+
+def get_poi_selection_llm_client(app_settings: Optional[Settings] = None) -> LLMClient:
+    """
+    Factory function for POI selection LLM client.
+    Uses a configurable model for selecting/re-ranking POI candidates.
+
+    Defaults to trip_planning_model if poi_selection_model is not set.
+    Uses lower temperature (0.2) for more deterministic selections.
+
+    Args:
+        app_settings: Optional settings override (for testing)
+    """
+    s = app_settings or settings
+
+    # Use poi_selection_model if set, otherwise fall back to trip_planning_model
+    model = s.poi_selection_model if s.poi_selection_model else s.trip_planning_model
+
+    if s.llm_provider == "ionet":
+        if not s.ionet_api_key:
+            raise ValueError(
+                "IO Intelligence API key is required. "
+                "Set IONET_API_KEY environment variable."
+            )
+        return IoNetLLMClient(
+            api_key=s.ionet_api_key,
+            model=model,
+            max_output_tokens=1024,  # POI selection responses are compact
+            temperature=0.2,  # Low temperature for deterministic selection
+            base_url=s.ionet_base_url,
+        )
+    elif s.llm_provider == "anthropic":
+        return AnthropicLLMClient(model=model)
+    else:
+        raise ValueError(f"Unknown LLM provider: {s.llm_provider}. Use 'ionet' or 'anthropic'.")
