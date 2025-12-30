@@ -48,7 +48,8 @@ extension ItineraryResponseDTO {
             days: days,
             travellersCount: travelersCount,
             comfortLevel: mapBudgetToComfortLevel(budget),
-            interestsSummary: interestsSummary
+            interestsSummary: interestsSummary,
+            tripSummary: tripSummary
         )
     }
 
@@ -80,7 +81,7 @@ extension ItineraryDayDTO {
             index: dayNumber,
             date: date,
             title: theme,
-            summary: theme,
+            summary: summary,
             activities: activities
         )
     }

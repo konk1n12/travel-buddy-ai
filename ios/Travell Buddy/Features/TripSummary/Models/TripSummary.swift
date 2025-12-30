@@ -12,6 +12,8 @@ import Foundation
 struct DaySummary: Identifiable {
     let dayIndex: Int
     let date: Date
+    let title: String?      // Day theme/title (e.g. "Исторический центр")
+    let summary: String?    // Brief description of what to expect
 
     // Walking stats
     let totalDistanceMeters: Int
@@ -100,6 +102,7 @@ struct TripSummary {
     let endDate: Date
     let daysCount: Int
     let travelersCount: Int
+    let tripDescription: String?  // Brief overview of the entire trip
 
     // Aggregated walking stats
     let totalDistanceMeters: Int

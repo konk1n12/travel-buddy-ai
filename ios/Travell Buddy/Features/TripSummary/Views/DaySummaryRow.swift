@@ -27,10 +27,31 @@ struct DaySummaryRow: View {
                     // Day number badge
                     dayBadge
 
-                    // Date and stats
+                    // Date, title and stats
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(dateFormatter.string(from: summary.date))
-                            .font(.system(size: 15, weight: .medium))
+                        HStack(spacing: 6) {
+                            Text(dateFormatter.string(from: summary.date))
+                                .font(.system(size: 15, weight: .medium))
+
+                            if let title = summary.title {
+                                Text("·")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.secondary)
+                                Text(title)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+
+                        // Day summary description
+                        if let daySummary = summary.summary {
+                            Text(daySummary)
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
 
                         HStack(spacing: 12) {
                             miniStat(icon: "figure.walk", value: summary.formattedSteps)
@@ -42,16 +63,18 @@ struct DaySummaryRow: View {
                     Spacer()
 
                     // Weather or intensity
-                    if let weather = summary.weather {
-                        weatherBadge(weather)
-                    } else {
-                        intensityIndicator
-                    }
+                    VStack(alignment: .trailing, spacing: 6) {
+                        if let weather = summary.weather {
+                            weatherBadge(weather)
+                        } else {
+                            intensityIndicator
+                        }
 
-                    // Chevron
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.secondary)
+                        // Chevron
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.secondary)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)

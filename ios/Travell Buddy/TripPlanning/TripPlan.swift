@@ -17,6 +17,7 @@ struct TripPlan {
     let travellersCount: Int
     let comfortLevel: String
     let interestsSummary: String
+    let tripSummary: String?  // Brief overview of the entire trip
 
     /// Returns the coordinate of the first activity with valid coordinates, or nil if none found.
     var cityCoordinate: CLLocationCoordinate2D? {
