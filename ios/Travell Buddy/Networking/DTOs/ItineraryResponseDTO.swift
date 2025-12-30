@@ -11,11 +11,13 @@ struct ItineraryResponseDTO: Codable {
     let tripId: String
     let days: [ItineraryDayDTO]
     let createdAt: String
+    let tripSummary: String?  // Brief overview of the entire trip
 
     enum CodingKeys: String, CodingKey {
         case tripId = "trip_id"
         case days
         case createdAt = "created_at"
+        case tripSummary = "trip_summary"
     }
 }
 
@@ -23,12 +25,14 @@ struct ItineraryDayDTO: Codable {
     let dayNumber: Int
     let date: String  // "YYYY-MM-DD"
     let theme: String?
+    let summary: String?  // Brief description of what to expect this day
     let blocks: [ItineraryBlockDTO]
 
     enum CodingKeys: String, CodingKey {
         case dayNumber = "day_number"
         case date
         case theme
+        case summary
         case blocks
     }
 }

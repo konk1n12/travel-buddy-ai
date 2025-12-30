@@ -81,6 +81,7 @@ final class TripSummaryCalculator {
             endDate: plan.endDate,
             daysCount: daysCount,
             travelersCount: plan.travellersCount,
+            tripDescription: plan.tripSummary,
             totalDistanceMeters: totalDistance,
             totalEstimatedSteps: totalSteps,
             totalWalkingTimeMinutes: totalWalkingTime,
@@ -142,6 +143,8 @@ final class TripSummaryCalculator {
         return DaySummary(
             dayIndex: day.index,
             date: day.date,
+            title: day.title,
+            summary: day.summary,
             totalDistanceMeters: totalDistance,
             estimatedSteps: estimatedSteps,
             totalWalkingTimeMinutes: totalWalkingTime,

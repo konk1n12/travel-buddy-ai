@@ -79,6 +79,17 @@ struct TripSummaryView: View {
             Text("\(dateFormatter.string(from: summary.startDate)) – \(dateFormatter.string(from: summary.endDate))")
                 .font(.system(size: 16))
                 .foregroundColor(.secondary)
+
+            // Trip description
+            if let tripDescription = summary.tripDescription {
+                Text(tripDescription)
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(4)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+            }
         }
         .padding(.top, 8)
     }
