@@ -58,7 +58,7 @@ class POIPlanner:
 
     # Number of candidates to fetch from provider (before LLM selection)
     # When LLM is enabled, we fetch more candidates for LLM to choose from
-    CANDIDATES_PER_BLOCK = 3
+    CANDIDATES_PER_BLOCK = 5
     CANDIDATES_FOR_LLM_SELECTION = 10
 
     def __init__(
