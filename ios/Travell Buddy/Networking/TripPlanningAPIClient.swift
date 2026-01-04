@@ -86,6 +86,9 @@ final class TripPlanningAPIClient: TripPlanningAPIClientProtocol {
         case 401:
             throw APIError.unauthorized
 
+        case 402:
+            throw APIError.paywallRequired
+
         default:
             let message = String(data: data, encoding: .utf8)
             print("❌ HTTP error: \(httpResponse.statusCode), message: \(message ?? "none")")
@@ -142,6 +145,9 @@ final class TripPlanningAPIClient: TripPlanningAPIClientProtocol {
         case 401:
             throw APIError.unauthorized
 
+        case 402:
+            throw APIError.paywallRequired
+
         default:
             let message = String(data: data, encoding: .utf8)
             print("❌ HTTP error: \(httpResponse.statusCode), message: \(message ?? "none")")
@@ -193,6 +199,9 @@ final class TripPlanningAPIClient: TripPlanningAPIClientProtocol {
         case 401:
             throw APIError.unauthorized
 
+        case 402:
+            throw APIError.paywallRequired
+
         default:
             let message = String(data: data, encoding: .utf8)
             print("❌ HTTP error: \(httpResponse.statusCode), message: \(message ?? "none")")
@@ -243,6 +252,9 @@ final class TripPlanningAPIClient: TripPlanningAPIClientProtocol {
 
         case 401:
             throw APIError.unauthorized
+
+        case 402:
+            throw APIError.paywallRequired
 
         default:
             let message = String(data: data, encoding: .utf8)
@@ -300,6 +312,9 @@ final class TripPlanningAPIClient: TripPlanningAPIClientProtocol {
 
         case 401:
             throw APIError.unauthorized
+
+        case 402:
+            throw APIError.paywallRequired
 
         default:
             let message = String(data: data, encoding: .utf8)

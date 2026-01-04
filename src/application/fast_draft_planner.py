@@ -575,11 +575,9 @@ Generate JSON skeleton with desired_categories for each block."""
         poi_pools = {}
         fetch_limit = 30  # Reduced for speed (30 POIs × 10 categories = 300 total, plenty for variety)
 
-        # OPTIMIZATION: Fetch all categories in parallel for speed
-        import asyncio
-
-        async def fetch_category(category):
-            """Fetch POIs for a single category with distance validation"""
+        # AsyncSession is not concurrency-safe; fetch categories sequentially to avoid transaction errors.
+        print(f"  Fetching {fetch_limit} POIs for {len(categories)} categories (sequential)...")
+        for category in sorted(categories):
             candidates = await self.poi_provider.search_pois(
                 city=city,
                 desired_categories=[category],
@@ -593,16 +591,7 @@ Generate JSON skeleton with desired_categories for each block."""
             filtered = [c for c in candidates if (c.rating or 0) >= 4.5]
             result = filtered if filtered else candidates
             print(f"  ✓ {category}: {len(candidates)} POIs, {len(filtered)} with rating >= 4.5")
-            return category, result
-
-        # Fetch all categories in parallel
-        print(f"  Fetching {fetch_limit} POIs for {len(categories)} categories (parallel)...")
-        fetch_tasks = [fetch_category(cat) for cat in sorted(categories)]
-        results = await asyncio.gather(*fetch_tasks)
-
-        # Build pools dict
-        for category, pois in results:
-            poi_pools[category] = pois
+            poi_pools[category] = result
 
         return poi_pools
 

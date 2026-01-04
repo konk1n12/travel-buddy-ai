@@ -421,7 +421,7 @@ async def test_route_optimizer_stores_travel_details():
                 )
             return await self._fallback_provider.estimate_travel(origin, destination, mode)
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={

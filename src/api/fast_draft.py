@@ -4,10 +4,21 @@ Fast Draft API endpoint - optimized for p95 latency under 20 seconds.
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from src.infrastructure.database import get_db
+from src.infrastructure.models import TripModel, ItineraryModel
 from src.application.fast_draft_planner import FastDraftPlanner
 from src.domain.schemas import ItineraryResponse
+from src.auth.dependencies import (
+    get_auth_context,
+    AuthContext,
+    check_trip_ownership,
+    require_device_id_for_guest,
+    get_or_create_guest_device,
+    check_guest_trip_limit,
+    apply_guest_content_limit,
+)
 
 
 router = APIRouter(prefix="/trips", tags=["fast-draft"])
@@ -27,6 +38,7 @@ async def generate_fast_draft(
     trip_id: UUID,
     db: AsyncSession = Depends(get_db),
     debug: int = Query(default=0, ge=0, le=1, description="Enable debug trace (0 or 1)"),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> ItineraryResponse:
     """
     Generate fast draft itinerary.
@@ -52,6 +64,35 @@ async def generate_fast_draft(
         HTTPException 404 if trip not found
         HTTPException 500 if planning fails (should be rare due to fallback)
     """
+    require_device_id_for_guest(auth)
+    result = await db.execute(
+        select(TripModel).where(TripModel.id == trip_id)
+    )
+    trip = result.scalar_one_or_none()
+
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trip with ID {trip_id} not found"
+        )
+
+    if not check_trip_ownership(trip, auth):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this trip"
+        )
+
+    itinerary_result = await db.execute(
+        select(ItineraryModel).where(ItineraryModel.trip_id == trip_id)
+    )
+    itinerary_model = itinerary_result.scalar_one_or_none()
+    is_first_generation = itinerary_model is None
+
+    guest_device = None
+    if not auth.is_authenticated and is_first_generation:
+        guest_device = await get_or_create_guest_device(device_id=auth.device_id, db=db)
+        await check_guest_trip_limit(guest_device)
+
     planner = FastDraftPlanner()
 
     try:
@@ -62,7 +103,10 @@ async def generate_fast_draft(
             include_trace=True,  # always include basic trace
             enable_extended_trace=enable_extended_trace,  # extended trace only if debug=1
         )
-        return itinerary
+        if guest_device:
+            guest_device.generated_trips_count += 1
+            await db.commit()
+        return apply_guest_content_limit(itinerary, auth.is_authenticated)
 
     except ValueError as e:
         error_msg = str(e)

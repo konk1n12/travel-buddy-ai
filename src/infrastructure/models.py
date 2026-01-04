@@ -2,7 +2,7 @@
 SQLAlchemy ORM models for database tables.
 These are separate from domain models to maintain clean architecture.
 """
-from sqlalchemy import Column, String, Integer, DateTime, JSON, Date, Float, Enum as SQLEnum, UniqueConstraint
+from sqlalchemy import Column, String, Integer, DateTime, JSON, Date, Float, Enum as SQLEnum, UniqueConstraint, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 import uuid
@@ -21,6 +21,11 @@ class TripModel(Base):
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
     num_travelers = Column(Integer, nullable=False, default=1)
+
+    # Ownership - a trip belongs to either a user or a guest device
+    user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    device_id = Column(String, nullable=True, index=True)
+    is_legacy_public = Column(Boolean, nullable=False, default=False)
 
     pace = Column(SQLEnum(PaceLevel), nullable=False, default=PaceLevel.MEDIUM)
     budget = Column(SQLEnum(BudgetLevel), nullable=False, default=BudgetLevel.MEDIUM)

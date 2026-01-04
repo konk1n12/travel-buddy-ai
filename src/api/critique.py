@@ -4,10 +4,17 @@ Critique API endpoints for trip validation.
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from src.infrastructure.database import get_db
+from src.infrastructure.models import TripModel
 from src.application.trip_planner import TripPlannerOrchestrator
 from src.domain.schemas import CritiqueResponse
+from src.auth.dependencies import (
+    get_auth_context,
+    AuthContext,
+    check_trip_ownership,
+)
 
 
 router = APIRouter(prefix="/trips", tags=["critique"])
@@ -22,6 +29,7 @@ router = APIRouter(prefix="/trips", tags=["critique"])
 async def get_trip_critique(
     trip_id: UUID,
     db: AsyncSession = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> CritiqueResponse:
     """
     Get stored critique for a trip.
@@ -44,6 +52,23 @@ async def get_trip_critique(
     Raises:
         HTTPException 404 if trip not found
     """
+    result = await db.execute(
+        select(TripModel).where(TripModel.id == trip_id)
+    )
+    trip = result.scalar_one_or_none()
+
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trip with ID {trip_id} not found"
+        )
+
+    if not check_trip_ownership(trip, auth):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this trip"
+        )
+
     orchestrator = TripPlannerOrchestrator()
 
     try:

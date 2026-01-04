@@ -44,7 +44,7 @@ class MockTravelTimeProvider(TravelTimeProvider):
 async def test_route_optimizer_service():
     """Test RouteTimeOptimizer service end-to-end."""
     # Create trip with macro and POI plans
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -105,7 +105,7 @@ async def test_route_optimizer_service():
 async def test_route_optimizer_poi_selection():
     """Test that RouteTimeOptimizer selects top-ranked POI."""
     # Create trip with macro and POI plans
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -153,7 +153,7 @@ async def test_route_optimizer_poi_selection():
 async def test_route_optimizer_travel_times():
     """Test that RouteTimeOptimizer calculates travel times."""
     # Create trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -202,7 +202,7 @@ async def test_route_optimizer_travel_times():
 async def test_route_optimizer_rest_blocks():
     """Test that REST/TRAVEL blocks are handled correctly."""
     # Create trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -245,7 +245,7 @@ async def test_route_optimizer_rest_blocks():
 async def test_route_optimizer_missing_macro_plan():
     """Test that optimizer fails when macro plan is missing."""
     # Create trip without macro plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -270,7 +270,7 @@ async def test_route_optimizer_missing_macro_plan():
 async def test_route_optimizer_missing_poi_plan():
     """Test that optimizer fails when POI plan is missing."""
     # Create trip with macro plan but no POI plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -307,7 +307,7 @@ async def test_route_optimizer_missing_poi_plan():
 async def test_get_itinerary():
     """Test getting stored itinerary."""
     # Create trip and generate itinerary
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -348,7 +348,7 @@ async def test_get_itinerary():
 async def test_get_itinerary_not_found():
     """Test getting itinerary when none exists."""
     # Create trip without itinerary
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={

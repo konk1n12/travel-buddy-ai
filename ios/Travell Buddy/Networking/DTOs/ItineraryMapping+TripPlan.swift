@@ -49,7 +49,64 @@ extension ItineraryResponseDTO {
             travellersCount: travelersCount,
             comfortLevel: mapBudgetToComfortLevel(budget),
             interestsSummary: interestsSummary,
-            tripSummary: tripSummary
+            tripSummary: tripSummary,
+            isLocked: isLocked ?? false
+        )
+    }
+
+    func toTripPlan(
+        destinationCity: String,
+        budget: String,
+        interests: [String],
+        travelersCount: Int,
+        expectedStartDate: Date,
+        expectedEndDate: Date
+    ) -> TripPlan {
+        let isGuest = AuthSessionStore.shared.accessToken == nil
+        let days = self.days.map { $0.toTripDay() }
+
+        let interestsSummary = interests.isEmpty ? "путешествие" : interests.joined(separator: ", ")
+        let tripUUID = UUID(uuidString: self.tripId) ?? UUID()
+
+        let expectedDays = max(
+            Calendar.current.dateComponents([.day], from: expectedStartDate, to: expectedEndDate).day ?? 0,
+            0
+        ) + 1
+        let lockedByLength = days.count < expectedDays
+        let shouldLock = (isLocked ?? false) || lockedByLength || (isGuest && expectedDays > 1)
+        let visibleDays = shouldLock
+            ? days.filter { $0.index == 1 }
+            : days
+
+        return TripPlan(
+            tripId: tripUUID,
+            destinationCity: destinationCity,
+            startDate: expectedStartDate,
+            endDate: expectedEndDate,
+            days: visibleDays,
+            travellersCount: travelersCount,
+            comfortLevel: mapBudgetToComfortLevel(budget),
+            interestsSummary: interestsSummary,
+            tripSummary: tripSummary,
+            isLocked: shouldLock
+        )
+    }
+
+    func toTripPlan(using existingPlan: TripPlan) -> TripPlan {
+        let isGuest = AuthSessionStore.shared.accessToken == nil
+        let days = self.days.map { $0.toTripDay() }
+
+        return TripPlan(
+            tripId: existingPlan.tripId,
+            destinationCity: existingPlan.destinationCity,
+            startDate: existingPlan.startDate,
+            endDate: existingPlan.endDate,
+            days: days,
+            travellersCount: existingPlan.travellersCount,
+            comfortLevel: existingPlan.comfortLevel,
+            interestsSummary: existingPlan.interestsSummary,
+            tripSummary: tripSummary ?? existingPlan.tripSummary,
+            isLocked: isGuest ? (isLocked ?? existingPlan.isLocked) : (isLocked ?? false)
         )
     }
 

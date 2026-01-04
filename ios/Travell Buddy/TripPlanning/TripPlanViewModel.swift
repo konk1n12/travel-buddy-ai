@@ -26,21 +26,13 @@ final class TripPlanViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     @Published var lastUpdateResult: UpdateResult = .none
+    @Published var isShowingPaywall: Bool = false
+    @Published var pendingIntent: PendingIntent?
 
     private let apiClient: TripPlanningAPIClient
 
     // Store last generation parameters for retry
-    private var lastGenerationParams: GenerationParams?
-
-    struct GenerationParams {
-        let destinationCity: String
-        let startDate: Date
-        let endDate: Date
-        let selectedInterests: [String]
-        let budgetLevel: String
-        let travellersCount: Int
-        let pace: String
-    }
+    private var lastGenerationParams: TripGenerationParams?
 
     init(apiClient: TripPlanningAPIClient = .shared) {
         self.apiClient = apiClient
@@ -69,6 +61,25 @@ final class TripPlanViewModel: ObservableObject {
             travellersCount: params.travellersCount,
             pace: params.pace
         )
+    }
+
+    /// Refresh itinerary after authentication to unlock full content.
+    @MainActor
+    func refreshPlanAfterAuth() async -> Bool {
+        guard let existingPlan = plan else { return false }
+
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            let itinerary = try await apiClient.getItinerary(tripId: existingPlan.tripId.uuidString.lowercased())
+            self.plan = itinerary.toTripPlan(using: existingPlan)
+            return true
+        } catch {
+            self.errorMessage = (error as? LocalizedError)?.errorDescription
+                ?? "Не удалось обновить маршрут. Попробуйте ещё раз."
+            return false
+        }
     }
 
     // MARK: - Computed Properties
@@ -105,7 +116,7 @@ final class TripPlanViewModel: ObservableObject {
         pace: String = "medium"
     ) async {
         // Store parameters for potential retry
-        lastGenerationParams = GenerationParams(
+        lastGenerationParams = TripGenerationParams(
             destinationCity: destinationCity,
             startDate: startDate,
             endDate: endDate,
@@ -156,7 +167,9 @@ final class TripPlanViewModel: ObservableObject {
                 destinationCity: destinationCity,
                 budget: budgetLevel,
                 interests: selectedInterests,
-                travelersCount: travellersCount
+                travelersCount: travellersCount,
+                expectedStartDate: startDate,
+                expectedEndDate: endDate
             )
 
             print("🎉 Trip plan successfully generated!")
@@ -167,9 +180,16 @@ final class TripPlanViewModel: ObservableObject {
             if let apiError = error as? APIError {
                 print("❌ APIError details: \(apiError)")
             }
-            self.errorMessage = (error as? LocalizedError)?.errorDescription
-                ?? "Что-то пошло не так. Попробуйте ещё раз."
-            print("❌ Error generating plan: \(self.errorMessage ?? "Unknown error")")
+            if let apiError = error as? APIError, case .paywallRequired = apiError {
+                if let params = lastGenerationParams ?? buildParamsFromPlan() {
+                    pendingIntent = .generateTrip(params)
+                }
+                isShowingPaywall = true
+            } else {
+                self.errorMessage = (error as? LocalizedError)?.errorDescription
+                    ?? "Что-то пошло не так. Попробуйте ещё раз."
+                print("❌ Error generating plan: \(self.errorMessage ?? "Unknown error")")
+            }
         }
     }
 
@@ -244,12 +264,7 @@ final class TripPlanViewModel: ObservableObject {
             print("✅ Full itinerary fetched")
 
             // 3. Convert to TripPlan (preserve existing metadata)
-            self.plan = fullItinerary.toTripPlan(
-                destinationCity: currentPlan.destinationCity,
-                budget: currentPlan.comfortLevel,
-                interests: currentPlan.interestsSummary.components(separatedBy: ", "),
-                travelersCount: currentPlan.travellersCount
-            )
+            self.plan = fullItinerary.toTripPlan(using: currentPlan)
 
             lastUpdateResult = .success
             print("🎉 Trip plan successfully updated!")
@@ -258,10 +273,46 @@ final class TripPlanViewModel: ObservableObject {
         } catch {
             let errorMsg = (error as? LocalizedError)?.errorDescription
                 ?? "Что-то пошло не так. Попробуйте ещё раз."
-            self.errorMessage = errorMsg
-            lastUpdateResult = .failure(errorMsg)
-            print("❌ Error updating plan: \(errorMsg)")
-            return false
+            if let apiError = error as? APIError, case .paywallRequired = apiError {
+                if let params = lastGenerationParams ?? buildParamsFromPlan() {
+                    pendingIntent = .generateTrip(params)
+                }
+                isShowingPaywall = true
+                lastUpdateResult = .failure(errorMsg)
+                return false
+            } else {
+                self.errorMessage = errorMsg
+                lastUpdateResult = .failure(errorMsg)
+                print("❌ Error updating plan: \(errorMsg)")
+                return false
+            }
+        }
+    }
+
+    private func buildParamsFromPlan() -> TripGenerationParams? {
+        guard let plan = plan else { return nil }
+        let interests = plan.interestsSummary
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        return TripGenerationParams(
+            destinationCity: plan.destinationCity,
+            startDate: plan.startDate,
+            endDate: plan.endDate,
+            selectedInterests: interests,
+            budgetLevel: mapComfortToBudget(plan.comfortLevel),
+            travellersCount: plan.travellersCount,
+            pace: "medium"
+        )
+    }
+
+    private func mapComfortToBudget(_ comfort: String) -> String {
+        switch comfort.lowercased() {
+        case "эконом":
+            return "low"
+        case "премиум":
+            return "high"
+        default:
+            return "medium"
         }
     }
 

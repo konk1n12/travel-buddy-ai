@@ -9,7 +9,7 @@ from src.main import app
 @pytest.mark.asyncio
 async def test_health_endpoint():
     """Test the health check endpoint returns expected response."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.get("/api/health")
 
     assert response.status_code == 200
@@ -22,7 +22,7 @@ async def test_health_endpoint():
 @pytest.mark.asyncio
 async def test_root_endpoint():
     """Test the root endpoint returns API information."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.get("/")
 
     assert response.status_code == 200

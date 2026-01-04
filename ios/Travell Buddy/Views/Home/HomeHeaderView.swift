@@ -8,6 +8,8 @@
 import SwiftUI
 
 struct HomeHeaderView: View {
+    let onAccountTap: () -> Void
+
     var body: some View {
         HStack {
             Text("Travel Buddy")
@@ -16,25 +18,27 @@ struct HomeHeaderView: View {
             
             Spacer()
             
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 1.0, green: 0.69, blue: 0.55),
-                                Color(red: 0.86, green: 0.52, blue: 0.97)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+            Button(action: onAccountTap) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 1.0, green: 0.69, blue: 0.55),
+                                    Color(red: 0.86, green: 0.52, blue: 0.97)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                    )
-                    .frame(width: 36, height: 36)
-                
-                Text("AH")
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
+                        .frame(width: 36, height: 36)
+
+                    Image(systemName: AuthSessionStore.shared.accessToken == nil ? "person.fill" : "person.crop.circle.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                }
             }
+            .buttonStyle(.plain)
         }
     }
 }
-

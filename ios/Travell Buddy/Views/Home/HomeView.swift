@@ -12,6 +12,8 @@ struct HomeView: View {
     @State private var savedTicket: FlightTicket?
     @State private var navigateToTicketInput: Bool = false
     @State private var ticketForPlanning: FlightTicket?
+    @State private var showAccountSheet: Bool = false
+    @State private var showAuthSheet: Bool = false
 
     var body: some View {
         ZStack {
@@ -35,7 +37,13 @@ struct HomeView: View {
                     .buttonStyle(.plain)
                     .padding(.top, 8)
 
-                    HomeHeaderView()
+                    HomeHeaderView(onAccountTap: {
+                        if AuthSessionStore.shared.accessToken == nil {
+                            showAuthSheet = true
+                        } else {
+                            showAccountSheet = true
+                        }
+                    })
 
                     greetingSection
 
@@ -53,6 +61,18 @@ struct HomeView: View {
         .navigationBarHidden(true)
         .onAppear {
             savedTicket = FlightTicketStorage.shared.load()
+        }
+        .sheet(isPresented: $showAccountSheet) {
+            AccountSheet()
+        }
+        .sheet(isPresented: $showAuthSheet) {
+            PaywallView(
+                errorMessage: "Войдите, чтобы открыть личный кабинет",
+                onAuthSuccess: {
+                    showAuthSheet = false
+                    showAccountSheet = true
+                }
+            )
         }
         .background(
             Group {

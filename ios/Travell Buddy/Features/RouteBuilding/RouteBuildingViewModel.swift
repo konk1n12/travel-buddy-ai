@@ -16,11 +16,12 @@ enum RouteBuildingState: Equatable {
     case loading
     case animating
     case completed(ItineraryResponseDTO)
+    case paywallRequired
     case failed
 
     static func == (lhs: RouteBuildingState, rhs: RouteBuildingState) -> Bool {
         switch (lhs, rhs) {
-        case (.idle, .idle), (.loading, .loading), (.animating, .animating), (.failed, .failed):
+        case (.idle, .idle), (.loading, .loading), (.animating, .animating), (.paywallRequired, .paywallRequired), (.failed, .failed):
             return true
         case (.completed(let a), .completed(let b)):
             return a.tripId == b.tripId
@@ -185,7 +186,11 @@ final class RouteBuildingViewModel: ObservableObject {
             animationTimer?.invalidate()
             subtitleTimer?.invalidate()
 
-            state = .failed
+            if let apiError = error as? APIError, case .paywallRequired = apiError {
+                state = .paywallRequired
+            } else {
+                state = .failed
+            }
         }
     }
 

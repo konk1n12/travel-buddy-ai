@@ -12,7 +12,7 @@ from src.main import app
 async def test_get_critique_endpoint_success():
     """Test GET /api/trips/{trip_id}/critique endpoint."""
     # Create trip and generate plan (which includes critique)
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -56,7 +56,7 @@ async def test_get_critique_endpoint_success():
 async def test_get_critique_endpoint_empty():
     """Test GET /api/trips/{trip_id}/critique returns empty for trip without plan."""
     # Create trip without plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -84,7 +84,7 @@ async def test_get_critique_endpoint_trip_not_found():
     """Test GET /api/trips/{trip_id}/critique with non-existent trip."""
     fake_trip_id = uuid4()
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.get(f"/api/trips/{fake_trip_id}/critique")
 
     # Should return 404 (trip doesn't exist)
@@ -95,7 +95,7 @@ async def test_get_critique_endpoint_trip_not_found():
 async def test_critique_response_structure():
     """Test that critique response has correct structure."""
     # Create trip and plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -144,7 +144,7 @@ async def test_critique_response_structure():
 async def test_critique_by_severity_counts():
     """Test that by_severity counts match issue list."""
     # Create trip and plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -189,7 +189,7 @@ async def test_critique_by_severity_counts():
 async def test_critique_issue_codes():
     """Test that critique issues have valid codes."""
     # Create trip and plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -238,7 +238,7 @@ async def test_critique_issue_codes():
 async def test_critique_after_plan_regeneration():
     """Test that critique is updated when plan is regenerated."""
     # Create trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -279,7 +279,7 @@ async def test_critique_after_plan_regeneration():
 async def test_critique_created_at_timestamp():
     """Test that critique includes created_at timestamp."""
     # Create trip and plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={

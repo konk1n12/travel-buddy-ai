@@ -82,7 +82,7 @@ async def test_composite_provider_fallback():
 async def test_poi_planner_service():
     """Test POIPlanner service end-to-end."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -127,7 +127,7 @@ async def test_poi_planner_service():
 async def test_poi_plan_endpoint_create():
     """Test POST /api/trips/{trip_id}/poi-plan endpoint."""
     # Create trip and macro plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -166,7 +166,7 @@ async def test_poi_plan_endpoint_create():
 async def test_poi_plan_endpoint_get():
     """Test GET /api/trips/{trip_id}/poi-plan endpoint."""
     # Create trip, macro plan, and POI plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -203,7 +203,7 @@ async def test_poi_plan_endpoint_get():
 async def test_poi_plan_macro_plan_missing():
     """Test POI planning fails when macro plan is missing."""
     # Create trip without macro plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -225,7 +225,7 @@ async def test_poi_plan_macro_plan_missing():
 async def test_get_poi_plan_not_found():
     """Test getting POI plan when none exists."""
     # Create trip without POI plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -247,7 +247,7 @@ async def test_get_poi_plan_not_found():
 async def test_poi_planner_respects_block_types():
     """Test that POI planner only generates candidates for relevant block types."""
     # Create trip and macro plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -342,7 +342,7 @@ async def test_poi_planner_with_llm_selection_enabled():
     )
 
     # Create trip and macro plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -398,7 +398,7 @@ async def test_poi_planner_deterministic_mode_skips_llm():
     )
 
     # Create trip and macro plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -449,7 +449,7 @@ async def test_poi_planner_llm_fallback_on_empty_selection():
     )
 
     # Create trip and macro plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={

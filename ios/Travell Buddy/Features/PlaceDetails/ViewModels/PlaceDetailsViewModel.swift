@@ -2,56 +2,45 @@
 //  PlaceDetailsViewModel.swift
 //  Travell Buddy
 //
-//  ViewModel for managing place details loading and state.
+//  ViewModel for Google Places-backed place details.
 //
 
 import Foundation
 import SwiftUI
-import MapKit
+import CoreLocation
 
-// MARK: - State
-
-enum PlaceDetailsState: Equatable {
+enum PlaceDetailsState {
     case idle
     case loading
-    case loaded(PlaceDetails)
+    case loaded(PlaceDetailsViewData)
     case error(String)
-
-    static func == (lhs: PlaceDetailsState, rhs: PlaceDetailsState) -> Bool {
-        switch (lhs, rhs) {
-        case (.idle, .idle), (.loading, .loading):
-            return true
-        case (.loaded(let a), .loaded(let b)):
-            return a.id == b.id
-        case (.error(let a), .error(let b)):
-            return a == b
-        default:
-            return false
-        }
-    }
 }
-
-// MARK: - ViewModel
 
 @MainActor
 final class PlaceDetailsViewModel: ObservableObject {
-
-    // MARK: - Published State
-
     @Published private(set) var state: PlaceDetailsState = .idle
-    @Published private(set) var isSaved: Bool = false
-    @Published private(set) var isMandatory: Bool = false
-    @Published private(set) var isAvoided: Bool = false
+    @Published var isSaved: Bool = false
+    @Published var isInRoute: Bool = false
+    @Published var isMustVisit: Bool = false
+    @Published var noteText: String = ""
+    @Published private(set) var distanceKm: Double?
+    @Published private(set) var etaMinutes: Int?
 
-    // MARK: - Properties
+    let placeId: String
+    let fallbackPlace: Place?
 
-    let place: Place
     private let service: PlaceDetailsServiceProtocol
     private var loadTask: Task<Void, Never>?
 
-    // MARK: - Computed Properties
+    init(placeId: String, fallbackPlace: Place? = nil, service: PlaceDetailsServiceProtocol = PlaceDetailsService.shared) {
+        self.placeId = placeId
+        self.fallbackPlace = fallbackPlace
+        self.service = service
+        self.noteText = fallbackPlace?.note ?? ""
+        self.isInRoute = fallbackPlace != nil
+    }
 
-    var details: PlaceDetails? {
+    var details: PlaceDetailsViewData? {
         if case .loaded(let details) = state {
             return details
         }
@@ -59,7 +48,10 @@ final class PlaceDetailsViewModel: ObservableObject {
     }
 
     var isLoading: Bool {
-        state == .loading
+        if case .loading = state {
+            return true
+        }
+        return false
     }
 
     var errorMessage: String? {
@@ -69,33 +61,20 @@ final class PlaceDetailsViewModel: ObservableObject {
         return nil
     }
 
-    // MARK: - Init
-
-    init(
-        place: Place,
-        service: PlaceDetailsServiceProtocol = PlaceDetailsService.shared
-    ) {
-        self.place = place
-        self.service = service
-    }
-
-    deinit {
-        loadTask?.cancel()
-    }
-
-    // MARK: - Public Methods
-
     func loadDetails() {
-        guard state != .loading else { return }
+        if case .loading = state {
+            return
+        }
 
         loadTask?.cancel()
         state = .loading
 
         loadTask = Task {
             do {
-                let details = try await service.fetchDetails(for: place.id)
+                let dto = try await service.fetchDetails(for: placeId)
+                let viewData = dto.toViewData(apiBaseURL: AppConfig.baseURL)
                 guard !Task.isCancelled else { return }
-                state = .loaded(details)
+                state = .loaded(viewData)
             } catch {
                 guard !Task.isCancelled else { return }
                 state = .error(error.localizedDescription)
@@ -107,86 +86,47 @@ final class PlaceDetailsViewModel: ObservableObject {
         loadDetails()
     }
 
-    func cancelLoading() {
-        loadTask?.cancel()
-        loadTask = nil
+    func updateDistance(from location: CLLocation?) {
+        guard let location = location else { return }
+        let target = details?.coordinate ?? fallbackPlace?.coordinate
+        guard let target else { return }
+        let distance = DistanceETA.distanceKm(from: location.coordinate, to: target)
+        distanceKm = distance
+        etaMinutes = DistanceETA.estimateETA(distanceKm: distance, mode: .walking)
     }
 
-    // MARK: - Quick Actions
-
-    func toggleSave() {
-        isSaved.toggle()
-        // TODO: Persist to backend/local storage
-        HapticFeedback.light()
-    }
-
-    func toggleMandatory() {
-        isMandatory.toggle()
-        if isMandatory {
-            isAvoided = false
+    func highlightChips() -> [String] {
+        guard let details else {
+            return GooglePlaceTypeMapper.highlightChips(types: fallbackPlace?.tags ?? [], rating: nil, reviewsCount: nil)
         }
-        // TODO: Persist to backend/local storage
-        HapticFeedback.light()
+        return GooglePlaceTypeMapper.highlightChips(
+            types: details.types,
+            rating: details.rating,
+            reviewsCount: details.reviewsCount
+        )
     }
 
-    func toggleAvoided() {
-        isAvoided.toggle()
-        if isAvoided {
-            isMandatory = false
-        }
-        // TODO: Persist to backend/local storage
-        HapticFeedback.light()
-    }
-
-    func requestReplace() {
-        // TODO: Open replace flow
-        HapticFeedback.medium()
-    }
-
-    // MARK: - Navigation Actions
-
-    func openInMaps() {
-        guard let details = details else { return }
-
-        let placemark = MKPlacemark(coordinate: details.coordinate)
-        let mapItem = MKMapItem(placemark: placemark)
-        mapItem.name = details.name
-
-        mapItem.openInMaps(launchOptions: [
-            MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking
-        ])
-
-        HapticFeedback.light()
-    }
-
-    func callPhone() {
-        guard let details = details,
-              let phone = details.phone,
-              let url = URL(string: "tel://\(phone.replacingOccurrences(of: " ", with: ""))") else {
-            return
-        }
-
-        UIApplication.shared.open(url)
-        HapticFeedback.light()
-    }
-
-    func openWebsite() {
-        guard let details = details, let url = details.website else { return }
-        UIApplication.shared.open(url)
-        HapticFeedback.light()
+    func estimatedVisitDurationText() -> String? {
+        let types = details?.types ?? fallbackPlace?.tags ?? []
+        guard let duration = EstimatedDurationMapper.estimate(for: types) else { return nil }
+        return duration
     }
 }
 
-// MARK: - Haptic Feedback Helper
-
-private enum HapticFeedback {
-    static func light() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.impactOccurred()
-    }
-
-    static func medium() {
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.impactOccurred()
+enum EstimatedDurationMapper {
+    static func estimate(for types: [String]) -> String? {
+        if types.contains("restaurant") || types.contains("cafe") || types.contains("bar") {
+            return "~1 ч"
+        }
+        if types.contains("museum") {
+            return "~1 ч 30 мин"
+        }
+        if types.contains("park") {
+            return "~1 ч"
+        }
+        if types.contains("tourist_attraction") {
+            return "~1 ч"
+        }
+        return nil
     }
 }

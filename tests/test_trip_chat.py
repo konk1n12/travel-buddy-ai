@@ -52,7 +52,7 @@ def mock_llm_response_no_updates():
 async def test_trip_chat_assistant_with_updates(mock_llm_response_basic):
     """Test TripChatAssistant with trip updates from LLM."""
     # Create a trip first
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -89,7 +89,7 @@ async def test_trip_chat_assistant_with_updates(mock_llm_response_basic):
 async def test_trip_chat_assistant_no_updates(mock_llm_response_no_updates):
     """Test TripChatAssistant with no trip updates."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -122,7 +122,7 @@ async def test_trip_chat_assistant_no_updates(mock_llm_response_no_updates):
 async def test_trip_chat_endpoint_success():
     """Test POST /api/trips/{trip_id}/chat endpoint."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -177,7 +177,7 @@ async def test_trip_chat_endpoint_trip_not_found():
     """Test chat endpoint with non-existent trip."""
     fake_trip_id = str(uuid4())
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.post(
             f"/api/trips/{fake_trip_id}/chat",
             json={
@@ -193,7 +193,7 @@ async def test_trip_chat_endpoint_trip_not_found():
 async def test_trip_chat_cache():
     """Test that chat responses are cached."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -244,7 +244,7 @@ async def test_trip_chat_cache():
 async def test_trip_chat_merges_additional_preferences():
     """Test that additional_preferences are merged, not replaced."""
     # Create a trip with existing preferences
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -296,7 +296,7 @@ async def test_trip_chat_merges_additional_preferences():
 async def test_chat_request_validation():
     """Test chat request validation (empty message, too long, etc.)."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={

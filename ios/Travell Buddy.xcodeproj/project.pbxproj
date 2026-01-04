@@ -65,6 +65,7 @@
 			);
 			name = "Travell Buddy";
 			packageProductDependencies = (
+				A1B2C3D4E5F6A7B8C9D0E1F3 /* GoogleSignIn */,
 			);
 			productName = "Travell Buddy";
 			productReference = 64C9306F2EDDD56900111E1D /* Travell Buddy.app */;
@@ -94,6 +95,9 @@
 			);
 			mainGroup = 64C930662EDDD56900111E1D;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A1B2C3D4E5F6A7B8C9D0E1F2 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 64C930702EDDD56900111E1D /* Products */;
 			projectDirPath = "";
@@ -309,6 +313,25 @@
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A1B2C3D4E5F6A7B8C9D0E1F2 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A1B2C3D4E5F6A7B8C9D0E1F3 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A1B2C3D4E5F6A7B8C9D0E1F2 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCConfigurationList section */
 		64C9306A2EDDD56900111E1D /* Build configuration list for PBXProject "Travell Buddy" */ = {

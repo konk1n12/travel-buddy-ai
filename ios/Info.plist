@@ -16,6 +16,16 @@
                 <true/>
             </dict>
         </dict>
+</dict>
+<key>CFBundleURLTypes</key>
+<array>
+    <dict>
+        <key>CFBundleURLSchemes</key>
+        <array>
+            <string>travelbuddy</string>
+            <string>com.googleusercontent.apps.CHANGE_ME</string>
+        </array>
     </dict>
+</array>
 </dict>
 </plist>

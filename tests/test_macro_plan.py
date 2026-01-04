@@ -127,7 +127,7 @@ def mock_macro_plan_response():
 async def test_macro_planner_service(mock_macro_plan_response):
     """Test MacroPlanner service directly."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -176,7 +176,7 @@ async def test_macro_planner_service(mock_macro_plan_response):
 async def test_macro_plan_endpoint_create(mock_macro_plan_response):
     """Test POST /api/trips/{trip_id}/macro-plan endpoint."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -214,7 +214,7 @@ async def test_macro_plan_endpoint_create(mock_macro_plan_response):
 async def test_macro_plan_endpoint_get(mock_macro_plan_response):
     """Test GET /api/trips/{trip_id}/macro-plan endpoint."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -253,7 +253,7 @@ async def test_macro_plan_trip_not_found():
     """Test macro planning with non-existent trip."""
     fake_trip_id = str(uuid4())
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.post(f"/api/trips/{fake_trip_id}/macro-plan")
 
     assert response.status_code == 404
@@ -264,7 +264,7 @@ async def test_macro_plan_trip_not_found():
 async def test_get_macro_plan_not_found():
     """Test getting macro plan when none exists."""
     # Create a trip without macro plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -286,7 +286,7 @@ async def test_get_macro_plan_not_found():
 async def test_macro_plan_stored_in_database(mock_macro_plan_response):
     """Test that macro plan is persisted in database."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -318,7 +318,7 @@ async def test_macro_plan_stored_in_database(mock_macro_plan_response):
 async def test_macro_plan_respects_trip_spec(mock_macro_plan_response):
     """Test that macro planner receives correct trip context."""
     # Create a trip with specific preferences
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={

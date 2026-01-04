@@ -16,6 +16,8 @@ struct TripPlanView: View {
     @State private var editViewModel: EditDayViewModel?
     @State private var chatViewModel: ChatViewModel?
     @State private var selectedPlace: Place?
+    @State private var showPaywall: Bool = false
+    @State private var paywallError: String?
 
     init(viewModel: TripPlanViewModel) {
         _viewModel = StateObject(wrappedValue: viewModel)
@@ -89,10 +91,32 @@ struct TripPlanView: View {
             }
         }
         .background(chatNavigationLink)
+        .onChange(of: viewModel.isShowingPaywall) { newValue in
+            showPaywall = newValue
+        }
+        .onChange(of: showPaywall) { newValue in
+            if !newValue {
+                viewModel.isShowingPaywall = false
+            }
+        }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView(
+                errorMessage: paywallError,
+                onAuthSuccess: {
+                    handleAuthSuccess()
+                }
+            )
+        }
         .sheet(item: $selectedPlace) { place in
-            PlaceDetailsSheet(place: place)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+            if let placeId = place.googlePlaceId {
+                PlaceDetailsView(placeId: placeId, fallbackPlace: place)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            } else {
+                MissingPlaceIdView(placeName: place.name)
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
+            }
         }
         .onChange(of: isShowingEditDay) { newValue in
             if !newValue {
@@ -240,7 +264,13 @@ struct TripPlanView: View {
                 viewModel.selectedTab = .route
             }
             tabButton(title: "Карта", isSelected: viewModel.selectedTab == .map) {
-                viewModel.selectedTab = .map
+                if viewModel.plan?.isLocked == true {
+                    paywallError = "Карта доступна после входа"
+                    viewModel.pendingIntent = .openMap
+                    viewModel.isShowingPaywall = true
+                } else {
+                    viewModel.selectedTab = .map
+                }
             }
         }
         .frame(height: 38)
@@ -280,15 +310,37 @@ struct TripPlanView: View {
     }
 
     private func daySelector(plan: TripPlan) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        struct DayTabItem: Identifiable {
+            let id: Int
+            let date: Date
+            let isLocked: Bool
+        }
+
+        let totalDays = Calendar.current.dateComponents([.day], from: plan.startDate, to: plan.endDate).day ?? 0
+        let daysCount = max(totalDays + 1, plan.days.count)
+        let dayTabs: [DayTabItem] = (1...daysCount).compactMap { dayNumber in
+            guard let date = Calendar.current.date(byAdding: .day, value: dayNumber - 1, to: plan.startDate) else {
+                return nil
+            }
+            let isLocked = plan.isLocked && dayNumber > 1
+            return DayTabItem(id: dayNumber, date: date, isLocked: isLocked)
+        }
+
+        return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(plan.days) { day in
-                    let isSelected = day.index - 1 == viewModel.selectedDayIndex
+                ForEach(dayTabs) { day in
+                    let isSelected = day.id - 1 == viewModel.selectedDayIndex
                     Button {
-                        viewModel.selectedDayIndex = day.index - 1
+                        if day.isLocked {
+                            paywallError = "Полные дни доступны после входа"
+                            viewModel.pendingIntent = .openDay(day.id)
+                            viewModel.isShowingPaywall = true
+                        } else {
+                            viewModel.selectedDayIndex = day.id - 1
+                        }
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("День \(day.index)")
+                            Text("День \(day.id)")
                                 .font(.system(size: 13, weight: .semibold))
                             Text(dayDateText(day.date))
                                 .font(.system(size: 12))
@@ -300,7 +352,7 @@ struct TripPlanView: View {
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
                                 .fill(isSelected ? Color(red: 1.0, green: 0.45, blue: 0.35) : Color(.secondarySystemBackground))
                         )
-                        .foregroundColor(isSelected ? .white : Color(.label))
+                        .foregroundColor(isSelected ? .white : (day.isLocked ? Color(.secondaryLabel) : Color(.label)))
                     }
                     .buttonStyle(.plain)
                 }
@@ -427,7 +479,15 @@ struct TripPlanView: View {
             }
 
             // Map or empty state
-            if !viewModel.currentDayActivitiesWithCoordinates.isEmpty {
+            if viewModel.plan?.isLocked == true {
+                LockedMapView {
+                    paywallError = "Карта доступна после входа"
+                    viewModel.pendingIntent = .openMap
+                    viewModel.isShowingPaywall = true
+                }
+                .frame(height: 400)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            } else if !viewModel.currentDayActivitiesWithCoordinates.isEmpty {
                 RouteMapView(activities: viewModel.currentDayActivities)
                     .frame(height: 400)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -574,6 +634,39 @@ struct TripPlanView: View {
     }
 }
 
+private struct LockedMapView: View {
+    let onUnlock: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundColor(.orange)
+            Text("Карта доступна после входа")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Color(.label))
+            Text("Авторизуйтесь, чтобы увидеть все точки маршрута на карте.")
+                .font(.system(size: 13))
+                .foregroundColor(Color(.secondaryLabel))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+            Button(action: onUnlock) {
+                Text("Разблокировать")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(
+                        Capsule()
+                            .fill(Color(red: 1.0, green: 0.45, blue: 0.35))
+                    )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.secondarySystemBackground))
+    }
+}
+
 private extension Array {
     subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
@@ -602,5 +695,42 @@ extension TripPlanView {
             }
         )
         isShowingChat = true
+    }
+
+    private func handleAuthSuccess() {
+        showPaywall = false
+        viewModel.isShowingPaywall = false
+        guard let intent = viewModel.pendingIntent else { return }
+        viewModel.pendingIntent = nil
+
+        switch intent {
+        case .generateTrip(let params):
+            Task {
+                await viewModel.generatePlan(
+                    destinationCity: params.destinationCity,
+                    startDate: params.startDate,
+                    endDate: params.endDate,
+                    selectedInterests: params.selectedInterests,
+                    budgetLevel: params.budgetLevel,
+                    travellersCount: params.travellersCount,
+                    pace: params.pace
+                )
+            }
+        case .openDay(let dayNumber):
+            Task {
+                let refreshed = await viewModel.refreshPlanAfterAuth()
+                guard refreshed else { return }
+                if let plan = viewModel.plan,
+                   let index = plan.days.firstIndex(where: { $0.index == dayNumber }) {
+                    viewModel.selectedDayIndex = index
+                }
+            }
+        case .openMap:
+            Task {
+                let refreshed = await viewModel.refreshPlanAfterAuth()
+                guard refreshed else { return }
+                viewModel.selectedTab = .map
+            }
+        }
     }
 }

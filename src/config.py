@@ -93,6 +93,14 @@ class Settings(BaseSettings):
         default="https://maps.googleapis.com/maps/api/place/textsearch/json",
         description="Base URL for Google Places Text Search API"
     )
+    google_place_details_base_url: str = Field(
+        default="https://maps.googleapis.com/maps/api/place/details/json",
+        description="Base URL for Google Places Details API"
+    )
+    google_place_photo_base_url: str = Field(
+        default="https://maps.googleapis.com/maps/api/place/photo",
+        description="Base URL for Google Places Photo API"
+    )
     google_places_default_language: str = Field(
         default="en",
         description="Default language for Places API responses"

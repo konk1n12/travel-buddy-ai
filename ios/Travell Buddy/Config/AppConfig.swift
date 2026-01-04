@@ -41,4 +41,7 @@ struct AppConfig {
 
     /// Default request timeout
     static let requestTimeout: TimeInterval = 30
+
+    /// Google Sign-In client ID
+    static let googleClientId: String = ""
 }

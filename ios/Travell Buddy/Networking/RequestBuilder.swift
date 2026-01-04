@@ -50,6 +50,11 @@ struct RequestBuilder {
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(DeviceIdProvider.shared.deviceId, forHTTPHeaderField: "X-Device-Id")
+
+        if let accessToken = AuthSessionStore.shared.accessToken {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
 
         // Set body if provided
         if let body = body {

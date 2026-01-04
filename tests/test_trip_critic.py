@@ -23,7 +23,7 @@ from uuid import uuid4
 async def test_trip_critic_end_to_end():
     """Test TripCritic with a real planned trip."""
     # Create trip and generate full plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -61,7 +61,7 @@ async def test_trip_critic_end_to_end():
 async def test_trip_critic_day_too_busy():
     """Test DAY_TOO_BUSY detection."""
     # Create trip with slow pace
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -100,7 +100,7 @@ async def test_trip_critic_day_too_busy():
 async def test_trip_critic_missing_meals():
     """Test MISSING_BREAKFAST/LUNCH/DINNER detection."""
     # Create trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -138,7 +138,7 @@ async def test_trip_critic_missing_meals():
 async def test_trip_critic_storage():
     """Test that critique is stored in database."""
     # Create trip and generate plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -175,7 +175,7 @@ async def test_trip_critic_storage():
 async def test_trip_critic_get_critique_not_found():
     """Test getting critique when none exists."""
     # Create trip without plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -198,7 +198,7 @@ async def test_trip_critic_get_critique_not_found():
 async def test_trip_critic_severity_levels():
     """Test that issues have correct severity levels."""
     # Create trip and plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -239,7 +239,7 @@ async def test_trip_critic_severity_levels():
 async def test_trip_critic_issue_codes():
     """Test that all issues have valid codes."""
     # Create trip and plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -291,7 +291,7 @@ async def test_trip_critic_issue_codes():
 async def test_trip_critic_no_llm_calls():
     """Test that TripCritic is purely deterministic (no LLM calls)."""
     # Create trip and plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={

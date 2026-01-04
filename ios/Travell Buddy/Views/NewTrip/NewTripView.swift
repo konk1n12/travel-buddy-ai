@@ -33,6 +33,9 @@ struct NewTripView: View {
 
     // Route building state - using Identifiable item for fullScreenCover
     @State private var routeBuildingData: RouteBuildingData?
+    @State private var pendingRouteBuildingData: RouteBuildingData?
+    @State private var showPaywall: Bool = false
+    @State private var paywallError: String?
     
     // Форматированная строка путешественников
     private var travelersText: String {
@@ -198,7 +201,9 @@ struct NewTripView: View {
                         destinationCity: data.cityName,
                         budget: selectedBudget,
                         interests: Array(selectedInterests).sorted(),
-                        travelersCount: adultsCount + childrenCount
+                        travelersCount: adultsCount + childrenCount,
+                        expectedStartDate: startDate,
+                        expectedEndDate: endDate
                     )
 
                     // Показываем экран плана
@@ -209,6 +214,24 @@ struct NewTripView: View {
                     routeBuildingData = nil
                     planGenerationError = "Не удалось сгенерировать маршрут. Попробуйте ещё раз."
                     showErrorAlert = true
+                },
+                onPaywallRequired: {
+                    pendingRouteBuildingData = data
+                    routeBuildingData = nil
+                    paywallError = "Второе построение доступно после входа"
+                    showPaywall = true
+                }
+            )
+        }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView(
+                errorMessage: paywallError,
+                onAuthSuccess: {
+                    showPaywall = false
+                    if let pendingRouteBuildingData {
+                        routeBuildingData = pendingRouteBuildingData
+                        self.pendingRouteBuildingData = nil
+                    }
                 }
             )
         }
@@ -989,4 +1012,3 @@ struct NewTripView: View {
         }
     }
 }
-

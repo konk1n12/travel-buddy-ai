@@ -12,12 +12,14 @@ struct ItineraryResponseDTO: Codable {
     let days: [ItineraryDayDTO]
     let createdAt: String
     let tripSummary: String?  // Brief overview of the entire trip
+    let isLocked: Bool?
 
     enum CodingKeys: String, CodingKey {
         case tripId = "trip_id"
         case days
         case createdAt = "created_at"
         case tripSummary = "trip_summary"
+        case isLocked = "is_locked"
     }
 }
 

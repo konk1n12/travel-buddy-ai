@@ -9,6 +9,7 @@ from sqlalchemy import select
 from src.main import app
 from src.infrastructure.database import AsyncSessionLocal
 from src.infrastructure.models import TripModel
+from src.domain.models import PaceLevel, BudgetLevel
 
 
 @pytest.fixture
@@ -21,7 +22,7 @@ async def test_db():
 @pytest.mark.asyncio
 async def test_create_trip_minimal():
     """Test creating a trip with minimal required fields."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.post(
             "/api/trips",
             json={
@@ -57,9 +58,66 @@ async def test_create_trip_minimal():
 
 
 @pytest.mark.asyncio
+async def test_create_trip_requires_device_id_for_guest():
+    """Test guest trip creation requires X-Device-Id."""
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        response = await client.post(
+            "/api/trips",
+            json={
+                "city": "Lisbon",
+                "start_date": "2024-06-15",
+                "end_date": "2024-06-20",
+            }
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "DEVICE_ID_REQUIRED",
+        "message": "X-Device-Id is required for guest requests",
+    }
+
+
+@pytest.mark.asyncio
+async def test_trip_with_no_owner_not_readable_without_legacy_flag():
+    """Trips with no owner should not be readable unless legacy."""
+    async with AsyncSessionLocal() as db:
+        trip = TripModel(
+            city="Prague",
+            city_center_lat=None,
+            city_center_lon=None,
+            start_date=date(2024, 6, 15),
+            end_date=date(2024, 6, 20),
+            num_travelers=1,
+            pace=PaceLevel.MEDIUM,
+            budget=BudgetLevel.MEDIUM,
+            interests=[],
+            daily_routine={
+                "wake_time": "08:00:00",
+                "sleep_time": "23:00:00",
+                "breakfast_window": ["08:00:00", "10:00:00"],
+                "lunch_window": ["12:00:00", "14:00:00"],
+                "dinner_window": ["18:00:00", "21:00:00"],
+            },
+            hotel_location=None,
+            hotel_lat=None,
+            hotel_lon=None,
+            additional_preferences={},
+            is_legacy_public=False,
+        )
+        db.add(trip)
+        await db.commit()
+        await db.refresh(trip)
+
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        response = await client.get(f"/api/trips/{trip.id}")
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_create_trip_full():
     """Test creating a trip with all fields specified."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.post(
             "/api/trips",
             json={
@@ -101,7 +159,7 @@ async def test_create_trip_full():
 async def test_get_trip():
     """Test retrieving a trip by ID."""
     # First create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -127,7 +185,7 @@ async def test_get_trip_not_found():
     """Test retrieving a non-existent trip returns 404."""
     fake_id = "550e8400-e29b-41d4-a716-446655440000"
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.get(f"/api/trips/{fake_id}")
 
     assert response.status_code == 404
@@ -138,7 +196,7 @@ async def test_get_trip_not_found():
 async def test_update_trip_partial():
     """Test updating a trip with partial data."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -177,7 +235,7 @@ async def test_update_trip_partial():
 async def test_update_trip_with_preferences():
     """Test updating a trip with additional preferences (from chat)."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -212,7 +270,7 @@ async def test_update_trip_with_preferences():
 async def test_update_trip_daily_routine():
     """Test updating daily routine preferences."""
     # Create a trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         create_response = await client.post(
             "/api/trips",
             json={
@@ -251,7 +309,7 @@ async def test_update_trip_not_found():
     """Test updating a non-existent trip returns 404."""
     fake_id = "550e8400-e29b-41d4-a716-446655440000"
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.patch(
             f"/api/trips/{fake_id}",
             json={"pace": "fast"}
@@ -265,7 +323,7 @@ async def test_update_trip_not_found():
 async def test_trip_persists_in_database():
     """Test that created trip is actually stored in the database."""
     # Create a trip via API
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.post(
             "/api/trips",
             json={

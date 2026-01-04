@@ -16,6 +16,7 @@ enum APIError: Error, LocalizedError {
     case serverError(message: String)
     case tripNotFound
     case unauthorized
+    case paywallRequired
     case timeout
 
     /// User-friendly error message in Russian.
@@ -65,6 +66,9 @@ enum APIError: Error, LocalizedError {
         case .unauthorized:
             return "Необходима авторизация."
 
+        case .paywallRequired:
+            return "Доступно после авторизации."
+
         case .timeout:
             return "Превышено время ожидания. Попробуйте ещё раз."
         }
@@ -80,6 +84,8 @@ enum APIError: Error, LocalizedError {
         case .tripNotFound:
             return "Поездка не найдена"
         case .unauthorized:
+            return "Требуется авторизация"
+        case .paywallRequired:
             return "Требуется авторизация"
         default:
             return "Ошибка"

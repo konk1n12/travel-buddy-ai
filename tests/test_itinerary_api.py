@@ -6,13 +6,14 @@ from uuid import uuid4
 from httpx import AsyncClient
 
 from src.main import app
+from src.auth.config import auth_settings
 
 
 @pytest.mark.asyncio
 async def test_plan_trip_endpoint_success():
     """Test POST /api/trips/{trip_id}/plan endpoint."""
     # Create trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -67,7 +68,7 @@ async def test_plan_trip_endpoint_trip_not_found():
     """Test POST /api/trips/{trip_id}/plan with non-existent trip."""
     fake_trip_id = uuid4()
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.post(f"/api/trips/{fake_trip_id}/plan")
 
     assert response.status_code == 404
@@ -75,10 +76,49 @@ async def test_plan_trip_endpoint_trip_not_found():
 
 
 @pytest.mark.asyncio
+async def test_guest_second_trip_generation_paywalled():
+    """Guest should be paywalled on second trip generation."""
+    previous_limit = auth_settings.guest_max_trips
+    auth_settings.guest_max_trips = 1
+    headers = {"X-Device-Id": "paywall-device"}
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test", headers=headers) as client:
+            first_trip = await client.post(
+                "/api/trips",
+                json={
+                    "city": "Paris",
+                    "start_date": "2024-06-15",
+                    "end_date": "2024-06-16",
+                }
+            )
+            first_trip_id = first_trip.json()["id"]
+
+            first_plan = await client.post(f"/api/trips/{first_trip_id}/plan")
+            assert first_plan.status_code == 201
+
+            second_trip = await client.post(
+                "/api/trips",
+                json={
+                    "city": "Rome",
+                    "start_date": "2024-07-01",
+                    "end_date": "2024-07-02",
+                }
+            )
+            second_trip_id = second_trip.json()["id"]
+
+            second_plan = await client.post(f"/api/trips/{second_trip_id}/plan")
+            assert second_plan.status_code == 402
+            assert second_plan.json()["code"] == "PAYWALL_REQUIRED"
+    finally:
+        auth_settings.guest_max_trips = previous_limit
+
+
+@pytest.mark.asyncio
 async def test_plan_trip_endpoint_idempotent():
     """Test that calling /plan multiple times is idempotent."""
     # Create trip
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -120,7 +160,7 @@ async def test_plan_trip_endpoint_idempotent():
 async def test_get_itinerary_endpoint_success():
     """Test GET /api/trips/{trip_id}/itinerary endpoint."""
     # Create trip and generate plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -160,7 +200,7 @@ async def test_get_itinerary_endpoint_success():
 async def test_get_itinerary_endpoint_not_found():
     """Test GET /api/trips/{trip_id}/itinerary when no itinerary exists."""
     # Create trip without generating plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -183,7 +223,7 @@ async def test_get_itinerary_endpoint_trip_not_found():
     """Test GET /api/trips/{trip_id}/itinerary with non-existent trip."""
     fake_trip_id = uuid4()
 
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         response = await client.get(f"/api/trips/{fake_trip_id}/itinerary")
 
     assert response.status_code == 404
@@ -193,7 +233,7 @@ async def test_get_itinerary_endpoint_trip_not_found():
 async def test_plan_trip_endpoint_with_existing_macro_plan():
     """Test that /plan reuses existing macro plan."""
     # Create trip and macro plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -231,7 +271,7 @@ async def test_plan_trip_endpoint_with_existing_macro_plan():
 async def test_plan_trip_endpoint_with_existing_poi_plan():
     """Test that /plan reuses existing POI plan."""
     # Create trip with macro and POI plans
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -270,7 +310,7 @@ async def test_plan_trip_endpoint_with_existing_poi_plan():
 async def test_itinerary_has_poi_details():
     """Test that itinerary includes POI details."""
     # Create trip and generate plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -316,7 +356,7 @@ async def test_itinerary_has_poi_details():
 async def test_itinerary_has_travel_times():
     """Test that itinerary includes travel times."""
     # Create trip and generate plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={

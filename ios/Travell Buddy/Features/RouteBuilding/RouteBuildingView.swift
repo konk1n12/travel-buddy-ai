@@ -18,6 +18,7 @@ struct RouteBuildingView: View {
     let cityCoordinate: CLLocationCoordinate2D
     let onRouteReady: (ItineraryResponseDTO) -> Void
     let onRetry: () -> Void
+    let onPaywallRequired: () -> Void
 
     init(
         cityName: String,
@@ -25,12 +26,14 @@ struct RouteBuildingView: View {
         tripId: UUID,
         apiClient: TripPlanningAPIClientProtocol = TripPlanningAPIClient(),
         onRouteReady: @escaping (ItineraryResponseDTO) -> Void,
-        onRetry: @escaping () -> Void
+        onRetry: @escaping () -> Void,
+        onPaywallRequired: @escaping () -> Void
     ) {
         self.cityName = cityName
         self.cityCoordinate = cityCoordinate
         self.onRouteReady = onRouteReady
         self.onRetry = onRetry
+        self.onPaywallRequired = onPaywallRequired
 
         _viewModel = StateObject(wrappedValue: RouteBuildingViewModel(
             tripId: tripId,
@@ -141,6 +144,8 @@ struct RouteBuildingView: View {
             case .completed(let itinerary):
                 print("✅ Route completed! Days: \(itinerary.days.count)")
                 onRouteReady(itinerary)
+            case .paywallRequired:
+                onPaywallRequired()
             case .failed:
                 print("❌ Route generation failed, calling onRetry")
                 onRetry()

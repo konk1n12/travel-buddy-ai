@@ -15,6 +15,7 @@ struct Place: Identifiable, Hashable {
     let category: PlaceCategory
     let coordinate: CLLocationCoordinate2D
     let shortDescription: String?
+    let googlePlaceId: String?
 
     // Optional time info from itinerary
     let scheduledTime: String?
@@ -136,6 +137,7 @@ extension Place {
         self.category = PlaceCategory.from(activityCategory: activity.category)
         self.coordinate = activity.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
         self.shortDescription = activity.description
+        self.googlePlaceId = activity.poiId
         self.scheduledTime = activity.time
         self.endTime = activity.endTime
         self.duration = activity.durationMinutes.map { TimeInterval($0 * 60) }

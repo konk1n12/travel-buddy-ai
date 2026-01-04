@@ -536,7 +536,7 @@ async def test_composite_provider_handles_external_failure():
 @pytest.mark.asyncio
 async def test_poi_plan_endpoint_with_google_places():
     """Test POST /api/trips/{id}/poi-plan endpoint with mocked Google Places."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         # Create a trip
         trip_response = await client.post(
             "/api/trips",

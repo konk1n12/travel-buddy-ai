@@ -237,6 +237,53 @@ class TripChatResponse(BaseModel):
 
 # Macro Planning Schemas
 
+class PlacePhotoResponse(BaseModel):
+    id: str
+    width: Optional[int] = None
+    height: Optional[int] = None
+    attribution: list[str] = Field(default_factory=list)
+
+
+class PlaceReviewResponse(BaseModel):
+    author_name: str
+    rating: float
+    text: str
+    relative_time: str
+
+
+class PlaceDetailsResponse(BaseModel):
+    place_id: str
+    name: str
+    types: list[str] = Field(default_factory=list)
+    rating: Optional[float] = None
+    reviews_count: Optional[int] = None
+    price_level: Optional[int] = None
+    is_open_now: Optional[bool] = None
+    opening_hours: Optional[list[str]] = None
+    next_open_time: Optional[str] = None
+    next_close_time: Optional[str] = None
+    address: Optional[str] = None
+    latitude: float
+    longitude: float
+    website: Optional[str] = None
+    phone: Optional[str] = None
+    google_maps_url: Optional[str] = None
+    editorial_summary: Optional[str] = None
+    photos: list[PlacePhotoResponse] = Field(default_factory=list)
+    reservable: Optional[bool] = None
+    serves_breakfast: Optional[bool] = None
+    serves_lunch: Optional[bool] = None
+    serves_dinner: Optional[bool] = None
+    serves_beer: Optional[bool] = None
+    serves_wine: Optional[bool] = None
+    serves_vegetarian_food: Optional[bool] = None
+    takeout: Optional[bool] = None
+    delivery: Optional[bool] = None
+    dine_in: Optional[bool] = None
+    curbside_pickup: Optional[bool] = None
+    wheelchair_accessible_entrance: Optional[bool] = None
+    reviews: list[PlaceReviewResponse] = Field(default_factory=list)
+
 class MacroPlanResponse(BaseModel):
     """Response schema for macro plan (trip skeleton)."""
     trip_id: UUID = Field(description="Trip ID this plan belongs to")
@@ -468,6 +515,7 @@ class ItineraryResponse(BaseModel):
     trip_id: UUID = Field(description="Trip ID this itinerary belongs to")
     days: list[ItineraryDay] = Field(description="Complete itinerary days with selected POIs and timing")
     created_at: str = Field(description="ISO 8601 timestamp when itinerary was created")
+    is_locked: bool = Field(default=False, description="True when content is truncated for guests")
 
     class Config:
         json_schema_extra = {

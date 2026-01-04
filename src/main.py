@@ -14,6 +14,8 @@ from src.api.poi_plan import router as poi_plan_router
 from src.api.itinerary import router as itinerary_router
 from src.api.critique import router as critique_router
 from src.api.fast_draft import router as fast_draft_router
+from src.api.place_details import router as place_details_router
+from src.api.auth import router as auth_router
 
 
 @asynccontextmanager
@@ -50,6 +52,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(health_router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
 app.include_router(trips_router, prefix="/api")
 app.include_router(trip_chat_router, prefix="/api")
 app.include_router(macro_plan_router, prefix="/api")
@@ -57,6 +60,7 @@ app.include_router(poi_plan_router, prefix="/api")
 app.include_router(itinerary_router, prefix="/api")
 app.include_router(critique_router, prefix="/api")
 app.include_router(fast_draft_router, prefix="/api")
+app.include_router(place_details_router, prefix="/api")
 
 
 @app.get("/")

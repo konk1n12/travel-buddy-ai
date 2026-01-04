@@ -14,7 +14,7 @@ from src.infrastructure.database import AsyncSessionLocal
 async def test_trip_planner_orchestrator_full_pipeline():
     """Test TripPlannerOrchestrator executes full planning pipeline."""
     # Create trip without any plans
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -57,7 +57,7 @@ async def test_trip_planner_orchestrator_full_pipeline():
 async def test_trip_planner_orchestrator_reuses_macro_plan():
     """Test that orchestrator reuses existing macro plan."""
     # Create trip and macro plan
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -95,7 +95,7 @@ async def test_trip_planner_orchestrator_reuses_macro_plan():
 async def test_trip_planner_orchestrator_reuses_poi_plan():
     """Test that orchestrator reuses existing POI plan."""
     # Create trip with macro and POI plans
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -148,7 +148,7 @@ async def test_trip_planner_orchestrator_trip_not_found():
 async def test_get_itinerary_via_orchestrator():
     """Test getting itinerary through orchestrator."""
     # Create trip and generate itinerary
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -185,7 +185,7 @@ async def test_get_itinerary_via_orchestrator():
 async def test_get_itinerary_not_found_via_orchestrator():
     """Test getting itinerary when none exists."""
     # Create trip without itinerary
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={
@@ -210,7 +210,7 @@ async def test_get_itinerary_not_found_via_orchestrator():
 async def test_trip_planner_orchestrator_generates_all_stages():
     """Test that orchestrator generates macro plan, POI plan, and itinerary when all are missing."""
     # Create trip only
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(app=app, base_url="http://test", headers={"X-Device-Id": "test-device"}) as client:
         trip_response = await client.post(
             "/api/trips",
             json={

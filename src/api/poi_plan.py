@@ -4,10 +4,18 @@ POI Planning API endpoints for selecting venue candidates.
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from src.infrastructure.database import get_db
+from src.infrastructure.models import TripModel
 from src.application.poi_planner import POIPlanner
 from src.domain.schemas import POIPlanResponse
+from src.auth.dependencies import (
+    get_auth_context,
+    AuthContext,
+    check_trip_ownership,
+    require_device_id_for_guest,
+)
 
 
 router = APIRouter(prefix="/trips", tags=["poi-planning"])
@@ -23,6 +31,7 @@ router = APIRouter(prefix="/trips", tags=["poi-planning"])
 async def create_poi_plan(
     trip_id: UUID,
     db: AsyncSession = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> POIPlanResponse:
     """
     Generate POI plan (venue candidates) for a trip.
@@ -46,6 +55,24 @@ async def create_poi_plan(
         HTTPException 404 if trip not found or macro plan missing
         HTTPException 500 if planning fails
     """
+    require_device_id_for_guest(auth)
+    result = await db.execute(
+        select(TripModel).where(TripModel.id == trip_id)
+    )
+    trip = result.scalar_one_or_none()
+
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trip with ID {trip_id} not found"
+        )
+
+    if not check_trip_ownership(trip, auth):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this trip"
+        )
+
     planner = POIPlanner()
 
     try:
@@ -81,6 +108,7 @@ async def create_poi_plan(
 async def get_poi_plan(
     trip_id: UUID,
     db: AsyncSession = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
 ) -> POIPlanResponse:
     """
     Get stored POI plan for a trip.
@@ -96,6 +124,23 @@ async def get_poi_plan(
     Raises:
         HTTPException 404 if trip or POI plan not found
     """
+    result = await db.execute(
+        select(TripModel).where(TripModel.id == trip_id)
+    )
+    trip = result.scalar_one_or_none()
+
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trip with ID {trip_id} not found"
+        )
+
+    if not check_trip_ownership(trip, auth):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this trip"
+        )
+
     planner = POIPlanner()
     poi_plan = await planner.get_poi_plan(trip_id, db)
 
