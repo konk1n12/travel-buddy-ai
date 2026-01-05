@@ -56,9 +56,11 @@ class POIModel(Base):
     category = Column(String, nullable=False)
     tags = Column(JSON, nullable=False, default=list)
     rating = Column(Float, nullable=True)
+    user_ratings_total = Column(Integer, nullable=True)
     location = Column(String, nullable=False)
     opening_hours = Column(JSON, nullable=True)  # Store as JSON for flexibility
     description = Column(String, nullable=True)
+    business_status = Column(String, nullable=True)
 
     # External source tracking (e.g., "google_places")
     external_source = Column(String, nullable=True, index=True)

@@ -298,6 +298,7 @@ class MockPOISelectionLLMService:
         """
         self.selection_strategy = selection_strategy
         self.calls = []
+        self.day_calls = []
 
     async def select_pois_for_block(
         self,
@@ -327,6 +328,35 @@ class MockPOISelectionLLMService:
             return []
         else:
             return candidates[:max_results]
+
+    async def select_pois_for_day(
+        self,
+        trip_context,
+        day_context,
+        blocks,
+        candidates_by_block,
+        already_selected_ids,
+        **kwargs,
+    ):
+        """Mock day-level POI selection."""
+        self.day_calls.append({
+            "day_number": day_context.day_number,
+            "num_blocks": len(blocks),
+        })
+
+        if self.selection_strategy == "empty":
+            return {}
+
+        selections = {}
+        for block in blocks:
+            candidates = candidates_by_block.get(block.block_index, [])
+            if not candidates:
+                continue
+            if self.selection_strategy == "reverse":
+                selections[block.block_index] = candidates[-1]
+            else:
+                selections[block.block_index] = candidates[0]
+        return selections
 
 
 @pytest.mark.asyncio
@@ -376,13 +406,12 @@ async def test_poi_planner_with_llm_selection_enabled():
         )
         poi_plan = await planner.generate_poi_plan(trip_id, db)
 
-    # Verify LLM service was called for each block needing POIs
-    assert len(mock_llm_service.calls) > 0
+    # Verify day-level LLM service was called
+    assert len(mock_llm_service.day_calls) > 0
     assert poi_plan.trip_id == trip_id
 
-    # Verify all block types that need POIs had LLM called
-    for call in mock_llm_service.calls:
-        assert call["block_type"] in [BlockType.MEAL, BlockType.ACTIVITY, BlockType.NIGHTLIFE]
+    # Block-level calls should be unnecessary when day-level selection succeeds
+    assert len(mock_llm_service.calls) == 0
 
 
 @pytest.mark.asyncio
@@ -433,6 +462,7 @@ async def test_poi_planner_deterministic_mode_skips_llm():
 
     # Verify LLM service was NOT called
     assert len(mock_llm_service.calls) == 0
+    assert len(mock_llm_service.day_calls) == 0
     assert poi_plan.trip_id == trip_id
     assert len(poi_plan.blocks) > 0
 
@@ -482,7 +512,7 @@ async def test_poi_planner_llm_fallback_on_empty_selection():
         poi_plan = await planner.generate_poi_plan(trip_id, db)
 
     # LLM was called but returned empty, so fallback to deterministic should work
-    assert len(mock_llm_service.calls) > 0
+    assert len(mock_llm_service.day_calls) > 0
     assert poi_plan.trip_id == trip_id
     # Blocks should still have candidates from deterministic fallback
     # (if POI data exists in DB)
@@ -516,6 +546,6 @@ async def test_poi_planner_use_llm_selection_property():
 async def test_poi_planner_candidates_per_block_constants():
     """Test POI planner candidate constants are properly defined."""
     # Test class constants
-    assert POIPlanner.CANDIDATES_PER_BLOCK == 3
-    assert POIPlanner.CANDIDATES_FOR_LLM_SELECTION == 10
+    assert POIPlanner.CANDIDATES_PER_BLOCK == 5
+    assert POIPlanner.CANDIDATES_FOR_LLM_SELECTION == 15
     assert POIPlanner.CANDIDATES_FOR_LLM_SELECTION > POIPlanner.CANDIDATES_PER_BLOCK

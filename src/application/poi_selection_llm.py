@@ -20,6 +20,7 @@ from src.config import settings, Settings
 from src.domain.models import POICandidate, BlockType, BudgetLevel, PaceLevel
 from src.domain.schemas import TripResponse
 from src.infrastructure.llm_client import LLMClient, get_poi_selection_llm_client
+from src.infrastructure.poi_providers import haversine_distance_km
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,20 @@ Your goal is to select the best POIs from the given candidates based on:
 IMPORTANT: If you are unsure about a place or it seems to not fit well, simply do not select it.
 Do NOT try to fill all slots if the candidates are not good matches."""
 
+    # Day-level selection prompt (select one per block, maintain geographic coherence)
+    DAY_LEVEL_SYSTEM_PROMPT = """You are a route-aware POI selector for a single day.
+
+CRITICAL RULES:
+1. You MUST ONLY choose from the candidates provided for each block.
+2. You MUST select at most ONE candidate per block.
+3. You MUST NOT repeat the same candidate across blocks.
+4. You MUST NOT invent places or IDs.
+5. Prefer candidates that keep consecutive blocks close (avoid long hops).
+6. Return ONLY valid JSON matching the schema. No extra text.
+"""
+
+    DAY_LEVEL_MAX_CANDIDATES_PER_BLOCK = 8
+
     def __init__(
         self,
         llm_client: Optional[LLMClient] = None,
@@ -111,16 +126,46 @@ Do NOT try to fill all slots if the candidates are not good matches."""
             self._llm_client = get_poi_selection_llm_client(self._settings)
         return self._llm_client
 
-    def _build_candidate_description(self, candidate: POICandidate) -> dict:
+    def _build_candidate_description(
+        self,
+        candidate: POICandidate,
+        anchor_lat: Optional[float] = None,
+        anchor_lon: Optional[float] = None,
+        city_center_lat: Optional[float] = None,
+        city_center_lon: Optional[float] = None,
+    ) -> dict:
         """Build a compact description of a candidate for the LLM."""
-        return {
+        description = {
             "candidate_id": str(candidate.poi_id),
             "name": candidate.name,
             "category": candidate.category,
             "tags": candidate.tags[:5] if candidate.tags else [],  # Limit tags
             "rating": candidate.rating,
+            "user_ratings_total": candidate.user_ratings_total,
+            "price_level": candidate.price_level,
+            "business_status": candidate.business_status,
+            "open_now": candidate.open_now,
+            "rank_score": round(candidate.rank_score, 2),
             "location": candidate.location[:100] if candidate.location else "",  # Truncate
         }
+
+        if candidate.lat is not None and candidate.lon is not None:
+            if anchor_lat is not None and anchor_lon is not None:
+                description["distance_km_from_anchor"] = round(
+                    haversine_distance_km(
+                        anchor_lat, anchor_lon, candidate.lat, candidate.lon
+                    ),
+                    2,
+                )
+            if city_center_lat is not None and city_center_lon is not None:
+                description["distance_km_from_center"] = round(
+                    haversine_distance_km(
+                        city_center_lat, city_center_lon, candidate.lat, candidate.lon
+                    ),
+                    2,
+                )
+
+        return description
 
     def _build_user_prompt(
         self,
@@ -264,6 +309,209 @@ Respond with JSON only. No explanations outside the JSON."""
                 break
 
         return validated_candidates
+
+    def _build_day_prompt(
+        self,
+        trip_context: TripContext,
+        day_context: DayContext,
+        blocks: list[BlockContext],
+        candidates_by_block: dict[int, list[POICandidate]],
+        max_hop_distance_km: Optional[float],
+        anchor_lat: Optional[float],
+        anchor_lon: Optional[float],
+        city_center_lat: Optional[float],
+        city_center_lon: Optional[float],
+        preference_summary: Optional[dict],
+        max_candidates_per_block: int,
+    ) -> str:
+        """Build a day-level prompt for selecting one POI per block."""
+        blocks_payload = []
+        for block in blocks:
+            candidates = candidates_by_block.get(block.block_index, [])
+            limited = candidates[:max_candidates_per_block]
+            candidate_descriptions = [
+                self._build_candidate_description(
+                    c,
+                    anchor_lat=anchor_lat,
+                    anchor_lon=anchor_lon,
+                    city_center_lat=city_center_lat,
+                    city_center_lon=city_center_lon,
+                )
+                for c in limited
+            ]
+
+            blocks_payload.append({
+                "block_index": block.block_index,
+                "type": block.block_type.value,
+                "time": f"{block.start_time} - {block.end_time}",
+                "theme": block.theme or "",
+                "desired_categories": block.desired_categories,
+                "candidates": candidate_descriptions,
+            })
+
+        anchor_payload = None
+        if anchor_lat is not None and anchor_lon is not None:
+            anchor_payload = {"lat": anchor_lat, "lon": anchor_lon}
+
+        prompt = f"""Select one candidate per block for this day.
+
+## Trip Information
+- City: {trip_context.city}
+- Pace: {trip_context.pace.value}
+- Budget: {trip_context.budget.value}
+- Interests: {', '.join(trip_context.interests) if trip_context.interests else 'general sightseeing'}
+{f'- Notes: {trip_context.additional_notes}' if trip_context.additional_notes else ''}
+
+## Preference Signals
+{json.dumps(preference_summary or {}, indent=2)}
+
+## Day Context
+- Day {day_context.day_number}: {day_context.theme}
+- Start anchor (start near this if possible): {json.dumps(anchor_payload) if anchor_payload else 'null'}
+- Max hop distance (km): {max_hop_distance_km if max_hop_distance_km is not None else 'null'}
+
+## Already Selected (do not repeat)
+{json.dumps([str(pid) for pid in day_context.already_selected_poi_ids])}
+
+## Blocks and Candidates
+```json
+{json.dumps(blocks_payload, indent=2)}
+```
+
+## Instructions
+1. Select at most ONE candidate per block.
+2. Prefer candidates that keep consecutive blocks close together.
+3. Avoid duplicates across blocks.
+4. Use ONLY candidate_id values from each block's candidate list.
+
+## Required Response Format (JSON only)
+```json
+{{
+  "selections": [
+    {{"block_index": 0, "candidate_id": "uuid-from-candidates", "reason": "optional"}}
+  ]
+}}
+```
+
+Respond with JSON only."""
+
+        return prompt
+
+    def _parse_day_response(
+        self,
+        llm_response: dict,
+        candidates_by_block: dict[int, list[POICandidate]],
+        already_selected_ids: set[UUID],
+    ) -> dict[int, POICandidate]:
+        """Validate day-level response and map to candidates by block."""
+        selections = llm_response.get("selections", [])
+        if not isinstance(selections, list):
+            logger.warning("LLM response 'selections' is not a list")
+            return {}
+
+        result: dict[int, POICandidate] = {}
+        seen_ids: set[str] = set()
+
+        for item in selections:
+            if not isinstance(item, dict):
+                continue
+
+            block_index = item.get("block_index")
+            candidate_id = item.get("candidate_id")
+            if not isinstance(block_index, int) or candidate_id is None:
+                continue
+
+            if block_index in result:
+                continue
+
+            candidates = candidates_by_block.get(block_index, [])
+            candidate_map = {str(c.poi_id): c for c in candidates}
+            candidate_id_str = str(candidate_id)
+            if candidate_id_str not in candidate_map:
+                continue
+
+            if candidate_id_str in seen_ids:
+                continue
+
+            candidate = candidate_map[candidate_id_str]
+            if candidate.poi_id in already_selected_ids:
+                continue
+
+            result[block_index] = candidate
+            seen_ids.add(candidate_id_str)
+
+        return result
+
+    async def select_pois_for_day(
+        self,
+        trip_context: TripContext,
+        day_context: DayContext,
+        blocks: list[BlockContext],
+        candidates_by_block: dict[int, list[POICandidate]],
+        already_selected_ids: set[UUID],
+        max_hop_distance_km: Optional[float] = None,
+        anchor_lat: Optional[float] = None,
+        anchor_lon: Optional[float] = None,
+        city_center_lat: Optional[float] = None,
+        city_center_lon: Optional[float] = None,
+        preference_summary: Optional[dict] = None,
+    ) -> dict[int, POICandidate]:
+        """
+        Use LLM to select one POI per block for a day.
+
+        Returns a mapping of block_index -> selected POICandidate.
+        """
+        if not blocks:
+            return {}
+
+        max_candidates = min(
+            self._settings.poi_selection_max_candidates,
+            self.DAY_LEVEL_MAX_CANDIDATES_PER_BLOCK,
+        )
+
+        prompt = self._build_day_prompt(
+            trip_context=trip_context,
+            day_context=day_context,
+            blocks=blocks,
+            candidates_by_block=candidates_by_block,
+            max_hop_distance_km=max_hop_distance_km,
+            anchor_lat=anchor_lat,
+            anchor_lon=anchor_lon,
+            city_center_lat=city_center_lat,
+            city_center_lon=city_center_lon,
+            preference_summary=preference_summary,
+            max_candidates_per_block=max_candidates,
+        )
+
+        try:
+            logger.info(
+                f"Calling LLM for day-level POI selection: day={day_context.day_number}, "
+                f"blocks={len(blocks)}"
+            )
+            llm_response = await self.llm_client.generate_structured(
+                prompt=prompt,
+                system_prompt=self.DAY_LEVEL_SYSTEM_PROMPT,
+                max_tokens=768,
+            )
+
+            selected_map = self._parse_day_response(
+                llm_response=llm_response,
+                candidates_by_block=candidates_by_block,
+                already_selected_ids=already_selected_ids,
+            )
+
+            if selected_map:
+                logger.info(
+                    f"LLM selected POIs for {len(selected_map)} blocks on day {day_context.day_number}"
+                )
+                return selected_map
+
+        except ValueError as e:
+            logger.warning(f"Day-level LLM selection failed (JSON error): {e}")
+        except Exception as e:
+            logger.warning(f"Day-level LLM selection failed (unexpected error): {e}")
+
+        return {}
 
     async def select_pois_for_block(
         self,

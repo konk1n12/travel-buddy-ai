@@ -69,7 +69,12 @@ async def create_trip(
     """
     require_device_id_for_guest(auth)
     collector = TripSpecCollector()
-    trip_response = await collector.create_trip(request, db)
+    trip_response = await collector.create_trip(
+        request,
+        db,
+        user_id=auth.user_id if auth.is_authenticated else None,
+        device_id=auth.device_id if not auth.is_authenticated else None,
+    )
 
     # Link trip to user or device
     result = await db.execute(

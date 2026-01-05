@@ -1,0 +1,269 @@
+"""
+POI Agent - preference-aware scoring and selection helpers.
+
+This module builds a compact preference profile (optionally via LLM),
+then applies deterministic scoring to keep POIs aligned with user intent
+and geographic coherence.
+"""
+import json
+import logging
+import math
+from dataclasses import dataclass, field
+from typing import Optional
+
+from src.config import settings, Settings
+from src.domain.models import POICandidate, BlockType, BudgetLevel, PaceLevel
+from src.domain.schemas import TripResponse
+from src.infrastructure.llm_client import LLMClient, get_poi_selection_llm_client
+from src.infrastructure.poi_providers import haversine_distance_km
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class POIPreferenceProfile:
+    """Preference signals used for scoring and filtering POIs."""
+    must_include_keywords: list[str] = field(default_factory=list)
+    avoid_keywords: list[str] = field(default_factory=list)
+    search_keywords: list[str] = field(default_factory=list)
+    category_boosts: dict[str, float] = field(default_factory=dict)
+    tag_boosts: dict[str, float] = field(default_factory=dict)
+    min_rating: float = 4.2
+    preferred_price_levels: list[int] = field(default_factory=list)
+    rating_weight: float = 1.0
+    popularity_weight: float = 0.25
+    price_level_weight: float = 1.5
+
+
+class POIPreferenceAgent:
+    """
+    Builds a preference profile from TripSpec using LLM when available.
+
+    Falls back to heuristics when LLM is disabled or fails.
+    """
+    SYSTEM_PROMPT = """You are a travel preference analyzer.
+Extract preference signals for POI ranking. Return ONLY JSON.
+
+Constraints:
+- Use only the provided taxonomy keys for category_boosts:
+  restaurant, cafe, bar, museum, attraction, park, shopping, nightlife, wellness
+- Keep keyword lists short (<= 6 items each).
+- min_rating must be between 3.5 and 4.8.
+- preferred_price_levels must be a list of 0-4 integers.
+"""
+
+    def __init__(
+        self,
+        llm_client: Optional[LLMClient] = None,
+        app_settings: Optional[Settings] = None,
+    ):
+        self._llm_client = llm_client
+        self._settings = app_settings or settings
+
+    @property
+    def llm_client(self) -> LLMClient:
+        if self._llm_client is None:
+            self._llm_client = get_poi_selection_llm_client(self._settings)
+        return self._llm_client
+
+    async def build_profile(self, trip_spec: TripResponse) -> POIPreferenceProfile:
+        """Build a preference profile for the trip."""
+        if not self._settings.use_llm_for_poi_preferences:
+            return self._build_heuristic_profile(trip_spec)
+
+        payload = {
+            "city": trip_spec.city,
+            "pace": trip_spec.pace.value if isinstance(trip_spec.pace, PaceLevel) else str(trip_spec.pace),
+            "budget": trip_spec.budget.value if isinstance(trip_spec.budget, BudgetLevel) else str(trip_spec.budget),
+            "interests": trip_spec.interests,
+            "additional_preferences": trip_spec.additional_preferences or {},
+        }
+
+        prompt = f"""Trip preferences (JSON):
+{json.dumps(payload, ensure_ascii=False)}
+
+Return JSON with this exact schema:
+{{
+  "must_include_keywords": ["..."],
+  "avoid_keywords": ["..."],
+  "search_keywords": ["..."],
+  "category_boosts": {{"restaurant": 0.0}},
+  "tag_boosts": {{"michelin": 0.0}},
+  "min_rating": 4.2,
+  "preferred_price_levels": [2,3],
+  "rating_weight": 1.0,
+  "popularity_weight": 0.25,
+  "price_level_weight": 1.5
+}}"""
+
+        try:
+            response = await self.llm_client.generate_structured(
+                prompt=prompt,
+                system_prompt=self.SYSTEM_PROMPT,
+                max_tokens=512,
+            )
+            return self._parse_profile_response(response, trip_spec)
+        except Exception as exc:
+            logger.warning(f"POI preference LLM failed, using heuristics: {exc}")
+            return self._build_heuristic_profile(trip_spec)
+
+    def _parse_profile_response(
+        self,
+        response: dict,
+        trip_spec: TripResponse,
+    ) -> POIPreferenceProfile:
+        """Validate and normalize LLM response."""
+        def _list(value):
+            return value if isinstance(value, list) else []
+
+        def _dict(value):
+            return value if isinstance(value, dict) else {}
+
+        profile = POIPreferenceProfile(
+            must_include_keywords=[str(k).lower() for k in _list(response.get("must_include_keywords"))],
+            avoid_keywords=[str(k).lower() for k in _list(response.get("avoid_keywords"))],
+            search_keywords=[str(k).lower() for k in _list(response.get("search_keywords"))],
+            category_boosts={k: float(v) for k, v in _dict(response.get("category_boosts")).items()},
+            tag_boosts={k: float(v) for k, v in _dict(response.get("tag_boosts")).items()},
+            min_rating=float(response.get("min_rating", 4.2)),
+            preferred_price_levels=[int(v) for v in _list(response.get("preferred_price_levels")) if str(v).isdigit()],
+            rating_weight=float(response.get("rating_weight", 1.0)),
+            popularity_weight=float(response.get("popularity_weight", 0.25)),
+            price_level_weight=float(response.get("price_level_weight", 1.5)),
+        )
+
+        if profile.min_rating < 3.5 or profile.min_rating > 4.8:
+            profile.min_rating = 4.2
+
+        return profile
+
+    def _build_heuristic_profile(self, trip_spec: TripResponse) -> POIPreferenceProfile:
+        """Fallback profile based on simple keyword heuristics."""
+        interests = " ".join(trip_spec.interests or []).lower()
+        prefs = json.dumps(trip_spec.additional_preferences or {}, ensure_ascii=False).lower()
+        text = f"{interests} {prefs}"
+
+        profile = POIPreferenceProfile()
+
+        if "michelin" in text or "star restaurant" in text or "fine dining" in text:
+            profile.must_include_keywords = ["michelin", "fine dining", "tasting"]
+            profile.search_keywords = ["michelin", "fine dining"]
+            profile.tag_boosts.update({"michelin": 4.0, "fine dining": 2.5})
+            profile.min_rating = 4.5
+            profile.preferred_price_levels = [3, 4]
+
+        if "budget" in text or "cheap" in text:
+            profile.preferred_price_levels = [0, 1]
+            profile.min_rating = min(profile.min_rating, 4.2)
+
+        if "nightlife" in text:
+            profile.category_boosts["nightlife"] = 1.5
+
+        if "museum" in text or "history" in text:
+            profile.category_boosts.update({"museum": 1.5, "attraction": 1.2})
+
+        if "food" in text or "gastronomy" in text:
+            profile.category_boosts.update({"restaurant": 1.5, "cafe": 1.1})
+
+        return profile
+
+
+def score_candidate(
+    candidate: POICandidate,
+    block_type: BlockType,
+    desired_categories: list[str],
+    profile: POIPreferenceProfile,
+    anchor_lat: Optional[float] = None,
+    anchor_lon: Optional[float] = None,
+    day_center_lat: Optional[float] = None,
+    day_center_lon: Optional[float] = None,
+    distance_weight: float = 0.4,
+) -> float:
+    """Compute a preference-aware score for a POI candidate."""
+    score = candidate.rank_score
+
+    if candidate.rating is not None:
+        score += profile.rating_weight * candidate.rating
+
+    if candidate.user_ratings_total:
+        score += profile.popularity_weight * math.log1p(candidate.user_ratings_total)
+
+    if candidate.price_level is not None and profile.preferred_price_levels:
+        if candidate.price_level in profile.preferred_price_levels:
+            score += profile.price_level_weight
+        else:
+            score -= profile.price_level_weight * 0.75
+
+    # Category boosts
+    for category in desired_categories:
+        if candidate.category == category:
+            score += profile.category_boosts.get(category, 0.0)
+
+    # Keyword boosts/penalties
+    haystack = f"{candidate.name} {' '.join(candidate.tags or [])}".lower()
+    for keyword, boost in profile.tag_boosts.items():
+        if keyword in haystack:
+            score += boost
+    for keyword in profile.must_include_keywords:
+        if keyword in haystack:
+            score += 6.0
+    for keyword in profile.avoid_keywords:
+        if keyword in haystack:
+            score -= 5.0
+
+    if candidate.business_status and candidate.business_status.upper() != "OPERATIONAL":
+        score -= 2.5
+
+    if block_type == BlockType.MEAL and candidate.open_now is False:
+        score -= 1.0
+
+    # Distance penalty (anchor and day center)
+    if candidate.lat is not None and candidate.lon is not None:
+        if anchor_lat is not None and anchor_lon is not None:
+            score -= distance_weight * haversine_distance_km(
+                anchor_lat, anchor_lon, candidate.lat, candidate.lon
+            )
+        if day_center_lat is not None and day_center_lon is not None:
+            score -= (distance_weight * 0.5) * haversine_distance_km(
+                day_center_lat, day_center_lon, candidate.lat, candidate.lon
+            )
+
+    # Block-type nuance
+    if block_type == BlockType.MEAL and candidate.rating is not None:
+        score += 0.25 * candidate.rating
+
+    return score
+
+
+def filter_candidates_for_block(
+    candidates: list[POICandidate],
+    profile: POIPreferenceProfile,
+    block_type: BlockType,
+) -> list[POICandidate]:
+    """Filter candidates by rating and strong preference keywords if available."""
+    if not candidates:
+        return []
+
+    filtered = [c for c in candidates if (c.rating or 0) >= profile.min_rating]
+    if not filtered:
+        filtered = candidates
+
+    # Prefer operational places when status is available
+    if any(c.business_status for c in filtered):
+        operational = [
+            c for c in filtered
+            if not c.business_status or c.business_status.upper() == "OPERATIONAL"
+        ]
+        if operational:
+            filtered = operational
+
+    if profile.must_include_keywords and block_type == BlockType.MEAL:
+        matched = []
+        for candidate in filtered:
+            haystack = f"{candidate.name} {' '.join(candidate.tags or [])}".lower()
+            if any(keyword in haystack for keyword in profile.must_include_keywords):
+                matched.append(candidate)
+        if matched:
+            return matched
+
+    return filtered

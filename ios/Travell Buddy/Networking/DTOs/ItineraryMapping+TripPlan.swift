@@ -62,19 +62,14 @@ extension ItineraryResponseDTO {
         expectedStartDate: Date,
         expectedEndDate: Date
     ) -> TripPlan {
-        let isGuest = AuthSessionStore.shared.accessToken == nil
         let days = self.days.map { $0.toTripDay() }
 
         let interestsSummary = interests.isEmpty ? "путешествие" : interests.joined(separator: ", ")
         let tripUUID = UUID(uuidString: self.tripId) ?? UUID()
 
-        let expectedDays = max(
-            Calendar.current.dateComponents([.day], from: expectedStartDate, to: expectedEndDate).day ?? 0,
-            0
-        ) + 1
-        let lockedByLength = days.count < expectedDays
-        let shouldLock = (isLocked ?? false) || lockedByLength || (isGuest && expectedDays > 1)
-        let visibleDays = shouldLock
+        // Trust server's isLocked value - server handles freemium logic based on FREEMIUM_ENABLED
+        let serverIsLocked = isLocked ?? false
+        let visibleDays = serverIsLocked
             ? days.filter { $0.index == 1 }
             : days
 
@@ -88,14 +83,14 @@ extension ItineraryResponseDTO {
             comfortLevel: mapBudgetToComfortLevel(budget),
             interestsSummary: interestsSummary,
             tripSummary: tripSummary,
-            isLocked: shouldLock
+            isLocked: serverIsLocked
         )
     }
 
     func toTripPlan(using existingPlan: TripPlan) -> TripPlan {
-        let isGuest = AuthSessionStore.shared.accessToken == nil
         let days = self.days.map { $0.toTripDay() }
 
+        // Trust server's isLocked value - server handles freemium logic based on FREEMIUM_ENABLED
         return TripPlan(
             tripId: existingPlan.tripId,
             destinationCity: existingPlan.destinationCity,
@@ -106,7 +101,7 @@ extension ItineraryResponseDTO {
             comfortLevel: existingPlan.comfortLevel,
             interestsSummary: existingPlan.interestsSummary,
             tripSummary: tripSummary ?? existingPlan.tripSummary,
-            isLocked: isGuest ? (isLocked ?? existingPlan.isLocked) : (isLocked ?? false)
+            isLocked: isLocked ?? false
         )
     }
 

@@ -84,6 +84,18 @@ class Settings(BaseSettings):
         description="Maximum candidates to send to LLM for POI selection (cost control)"
     )
 
+    # Preference profile generation for POI scoring
+    use_llm_for_poi_preferences: bool = Field(
+        default=True,
+        description="Use LLM to build preference profile for POI ranking"
+    )
+
+    # Day-level LLM selection for POIs (selects one candidate per block)
+    enable_day_level_poi_selection: bool = Field(
+        default=True,
+        description="Use LLM to select POIs for all blocks in a day"
+    )
+
     # Google Maps Platform / Places API
     google_maps_api_key: Optional[str] = Field(
         default=None,
@@ -166,6 +178,62 @@ class Settings(BaseSettings):
     max_travel_minutes_per_hop: int = Field(
         default=40,
         description="Maximum allowed travel time in minutes between consecutive POIs"
+    )
+
+    max_hop_distance_km: float = Field(
+        default=8.0,
+        description="Maximum straight-line distance in km between consecutive POIs"
+    )
+
+    use_llm_for_route_optimization: bool = Field(
+        default=True,
+        description="Use LLM to order reorderable activity blocks within a day"
+    )
+
+    # =========================================================================
+    # Smart District-Based Routing (new algorithm)
+    # =========================================================================
+
+    # Enable smart routing with geographic clustering
+    enable_smart_routing: bool = Field(
+        default=True,
+        description="Enable district-based smart routing for optimized walking routes"
+    )
+
+    # Use LLM for district planning (vs deterministic fallback)
+    use_llm_for_district_planning: bool = Field(
+        default=True,
+        description="Use LLM to assign districts to time blocks (more intelligent routing)"
+    )
+
+    # Clustering parameters
+    cluster_cell_size_km: float = Field(
+        default=1.5,
+        description="Grid cell size for geographic clustering (larger = fewer, bigger districts)"
+    )
+    min_pois_per_district: int = Field(
+        default=5,
+        description="Minimum POIs to form a standalone district"
+    )
+    max_districts_per_city: int = Field(
+        default=8,
+        description="Maximum number of districts per city"
+    )
+
+    # POI quality threshold for smart routing
+    smart_routing_min_rating: float = Field(
+        default=4.5,
+        description="Minimum POI rating for smart routing selection"
+    )
+
+    # Candidate expansion when insufficient POIs in district
+    district_poi_min_candidates: int = Field(
+        default=3,
+        description="Minimum candidates needed per block; triggers expansion if fewer"
+    )
+    district_poi_expansion_factor: float = Field(
+        default=2.0,
+        description="Factor to expand search when insufficient candidates (e.g., 2.0 = double radius)"
     )
 
     # Server

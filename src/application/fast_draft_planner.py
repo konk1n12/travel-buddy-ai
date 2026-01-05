@@ -22,17 +22,18 @@ from src.domain.models import (
 )
 from src.domain.schemas import ItineraryResponse
 from src.application.trip_spec import TripSpecCollector
-from src.infrastructure.llm_client import LLMClient, get_macro_planning_llm_client
+from src.infrastructure.llm_client import LLMClient, get_trip_chat_llm_client
 from src.infrastructure.poi_providers import POIProvider, get_poi_provider
 from src.infrastructure.geocoding import get_geocoding_service
 from src.infrastructure.models import ItineraryModel
 
 
 # Hard timeout for LLM call (seconds)
-LLM_TIMEOUT_SECONDS = 15
+# Keep short to avoid iOS request timeout (fast draft must be quick)
+LLM_TIMEOUT_SECONDS = 8
 
 # Maximum tokens for draft (reduced for speed)
-DRAFT_MAX_TOKENS = 1024
+DRAFT_MAX_TOKENS = 512
 
 # Block types that need POI candidates
 BLOCK_TYPES_NEEDING_POIS = {
@@ -82,7 +83,7 @@ Rules:
         llm_client: Optional[LLMClient] = None,
         poi_provider: Optional[POIProvider] = None,
     ):
-        self.llm_client = llm_client or get_macro_planning_llm_client()
+        self.llm_client = llm_client or get_trip_chat_llm_client()
         self.poi_provider = poi_provider  # Will be set per request if None
         self.trip_spec_collector = TripSpecCollector()
 
@@ -481,6 +482,8 @@ Generate JSON skeleton with desired_categories for each block."""
             categories=all_categories_needed,
             budget=trip_spec.budget,
             db=db,
+            city_center_lat=trip_spec.city_center_lat,
+            city_center_lon=trip_spec.city_center_lon,
         )
 
         # STEP 3: Build itinerary with candidate selection + deduplication
@@ -539,61 +542,111 @@ Generate JSON skeleton with desired_categories for each block."""
         categories: set,
         budget: BudgetLevel,
         db: AsyncSession,
+        city_center_lat: Optional[float] = None,
+        city_center_lon: Optional[float] = None,
     ) -> dict:
         """
-        Fetch POI pools for each unique category (PARALLEL for speed).
+        Fetch POI pools for all categories in a SINGLE DB query.
 
         Strategy:
         - Geocode city to get center coordinates for distance validation
-        - Fetch 30 POIs per category (optimized for speed vs variety)
-        - Fetch all categories in parallel using asyncio.gather
+        - Fetch ALL categories in one bulk query (optimized vs sequential)
         - Filter by rating >= 4.5 for high quality
         - Validate distance from city center (prevents wrong-city POIs)
         - Return dict: category -> list[POICandidate]
 
-        Performance: ~5-10 seconds for 10-15 categories (parallel fetch)
+        Performance: ~2-5 seconds for 10-15 categories (single bulk query)
         """
-        if not self.poi_provider:
-            self.poi_provider = get_poi_provider(db)
+        from src.infrastructure.poi_providers import DBPOIProvider
 
-        # Geocode city to get center coordinates for distance validation
-        geocoding_service = get_geocoding_service()
-        geocoding_result = await geocoding_service.geocode_city(city)
-
-        city_center_lat = None
-        city_center_lon = None
         max_radius_km = 50.0  # 50km from city center
+        normalized_categories, category_aliases = self._normalize_categories(categories)
 
-        if geocoding_result:
-            city_center_lat = geocoding_result.lat
-            city_center_lon = geocoding_result.lon
+        if city_center_lat is None or city_center_lon is None:
+            geocoding_service = get_geocoding_service()
+            geocoding_result = await geocoding_service.geocode_city(city)
+            if geocoding_result:
+                city_center_lat = geocoding_result.lat
+                city_center_lon = geocoding_result.lon
+        if city_center_lat is not None and city_center_lon is not None:
             print(f"  📍 City center: {city} ({city_center_lat:.4f}, {city_center_lon:.4f})")
             print(f"  🔍 Distance validation: POIs must be within {max_radius_km}km from city center")
         else:
             print(f"  ⚠️ Could not geocode '{city}', distance validation disabled")
 
-        poi_pools = {}
-        fetch_limit = 30  # Reduced for speed (30 POIs × 10 categories = 300 total, plenty for variety)
+        # Use bulk fetch - single DB query for ALL categories
+        print(f"  Fetching POIs for {len(normalized_categories)} categories (bulk query)...")
 
-        # AsyncSession is not concurrency-safe; fetch categories sequentially to avoid transaction errors.
-        print(f"  Fetching {fetch_limit} POIs for {len(categories)} categories (sequential)...")
+        db_provider = DBPOIProvider(db)
+        base_pools = await db_provider.search_pois_bulk(
+            city=city,
+            all_categories=normalized_categories,
+            budget=budget,
+            limit_per_category=20,
+            city_center_lat=city_center_lat,
+            city_center_lon=city_center_lon,
+            max_radius_km=max_radius_km,
+            min_rating=4.5,
+            include_tags=False,
+        )
+
+        # Expand pools to original aliases so selection can use original categories
+        poi_pools = {}
+        for original_category in categories:
+            mapped = category_aliases.get(original_category, original_category)
+            poi_pools[original_category] = base_pools.get(mapped, [])
+
+        # Log results
+        total_pois = sum(len(pois) for pois in poi_pools.values())
+        print(f"  ✓ Bulk fetch complete: {total_pois} POIs across {len(categories)} categories")
         for category in sorted(categories):
-            candidates = await self.poi_provider.search_pois(
-                city=city,
-                desired_categories=[category],
-                budget=budget,
-                limit=fetch_limit,
-                city_center_lat=city_center_lat,
-                city_center_lon=city_center_lon,
-                max_radius_km=max_radius_km,
-            )
-            # Filter by rating >= 4.5 for high quality
-            filtered = [c for c in candidates if (c.rating or 0) >= 4.5]
-            result = filtered if filtered else candidates
-            print(f"  ✓ {category}: {len(candidates)} POIs, {len(filtered)} with rating >= 4.5")
-            poi_pools[category] = result
+            pois = poi_pools.get(category, [])
+            if pois:
+                print(f"    {category}: {len(pois)} POIs")
 
         return poi_pools
+
+    def _normalize_categories(self, categories: set) -> tuple[set, dict]:
+        """Normalize desired categories to a smaller canonical set."""
+        alias_map = {
+            "breakfast": "cafe",
+            "bakery": "cafe",
+            "fine dining": "restaurant",
+            "local cuisine": "restaurant",
+            "viewpoint": "attraction",
+            "landmark": "attraction",
+            "culture": "museum",
+        }
+
+        normalized = set()
+        aliases = {}
+        for category in categories:
+            key = category.lower()
+            mapped = alias_map.get(key, key)
+
+            # Heuristic mapping for common free-form categories
+            if any(token in key for token in ("restaurant", "cuisine", "dining", "food")):
+                mapped = "restaurant"
+            elif any(token in key for token in ("cafe", "coffee", "bakery")):
+                mapped = "cafe"
+            elif "bar" in key:
+                mapped = "bar"
+            elif any(token in key for token in ("museum", "gallery")):
+                mapped = "museum"
+            elif any(token in key for token in ("attraction", "landmark", "sight", "viewpoint")):
+                mapped = "attraction"
+            elif any(token in key for token in ("park", "garden")):
+                mapped = "park"
+            elif any(token in key for token in ("shopping", "market", "mall")):
+                mapped = "shopping"
+            elif any(token in key for token in ("nightlife", "club")):
+                mapped = "nightlife"
+            elif any(token in key for token in ("spa", "wellness", "gym")):
+                mapped = "wellness"
+
+            normalized.add(mapped)
+            aliases[category] = mapped
+        return normalized, aliases
 
     async def _select_poi_from_pool(
         self,

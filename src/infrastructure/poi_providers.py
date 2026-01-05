@@ -173,7 +173,10 @@ class GooglePlaceResult:
     formatted_address: str
     types: list[str]
     rating: Optional[float]
+    user_ratings_total: Optional[int]
     price_level: Optional[int]
+    business_status: Optional[str]
+    open_now: Optional[bool]
     lat: float
     lon: float
 
@@ -193,6 +196,7 @@ class POIProvider(ABC):
         city_center_lon: Optional[float] = None,
         max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
         block_type: Optional[BlockType] = None,
+        search_keywords: Optional[list[str]] = None,
     ) -> list[POICandidate]:
         """
         Search for POIs matching criteria.
@@ -284,6 +288,114 @@ class DBPOIProvider(POIProvider):
 
         return score
 
+    async def search_pois_bulk(
+        self,
+        city: str,
+        all_categories: set[str],
+        budget: Optional[BudgetLevel] = None,
+        limit_per_category: int = 30,
+        city_center_lat: Optional[float] = None,
+        city_center_lon: Optional[float] = None,
+        max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
+        min_rating: float = 4.5,
+        include_tags: bool = True,
+    ) -> dict[str, list[POICandidate]]:
+        """
+        Fetch POIs for ALL categories in a single DB query.
+
+        This is optimized for fast_draft_planner to avoid sequential queries.
+
+        Args:
+            city: City name
+            all_categories: Set of all categories to fetch
+            budget: Budget level for scoring
+            limit_per_category: Max POIs per category
+            city_center_lat/lon: For radius filtering
+            max_radius_km: Max distance from city center
+            min_rating: Minimum rating filter
+
+        Returns:
+            Dict mapping category -> list of POICandidates
+        """
+        if not all_categories:
+            return {}
+
+        # Build query: match city AND (category OR any tag)
+        query = select(POIModel).where(POIModel.city == city)
+
+        # Add category/tag filters for ALL categories at once
+        filters = []
+        for category in all_categories:
+            filters.append(POIModel.category == category)
+            if include_tags:
+                filters.append(POIModel.tags.cast(String).contains(category))
+
+        if filters:
+            query = query.where(or_(*filters))
+
+        if min_rating is not None:
+            query = query.where(POIModel.rating >= min_rating)
+
+        # Execute single query
+        result = await self.db.execute(query)
+        poi_models = result.scalars().all()
+
+        # Apply post-query filtering and sort into category pools
+        has_city_center = city_center_lat is not None and city_center_lon is not None
+        category_pools: dict[str, list[tuple[POIModel, float]]] = {cat: [] for cat in all_categories}
+
+        for poi in poi_models:
+            # Radius filtering
+            if has_city_center and poi.lat is not None and poi.lon is not None:
+                distance_km = haversine_distance_km(
+                    city_center_lat, city_center_lon, poi.lat, poi.lon
+                )
+                if distance_km > max_radius_km:
+                    continue
+
+            # Rating filtering
+            if (poi.rating or 0) < min_rating:
+                continue
+
+            # Score the POI
+            score = self._calculate_relevance_score(poi, list(all_categories), budget)
+
+            # Add to matching category pools
+            if poi.category in all_categories:
+                category_pools[poi.category].append((poi, score))
+
+            # Also add to pools matching tags
+            for tag in (poi.tags or []):
+                if tag in all_categories and tag != poi.category:
+                    category_pools[tag].append((poi, score))
+
+        # Convert to POICandidate and sort each pool by score
+        result_pools: dict[str, list[POICandidate]] = {}
+
+        for category, scored_pois in category_pools.items():
+            scored_pois.sort(key=lambda x: x[1], reverse=True)
+
+            candidates = []
+            for poi, score in scored_pois[:limit_per_category]:
+                candidates.append(POICandidate(
+                    poi_id=poi.id,
+                    name=poi.name,
+                    category=poi.category,
+                    tags=poi.tags or [],
+                    rating=poi.rating,
+                    user_ratings_total=poi.user_ratings_total,
+                    price_level=poi.price_level,
+                    business_status=poi.business_status,
+                    open_now=(poi.opening_hours or {}).get("open_now") if isinstance(poi.opening_hours, dict) else None,
+                    location=poi.location,
+                    lat=poi.lat,
+                    lon=poi.lon,
+                    rank_score=score,
+                ))
+            result_pools[category] = candidates
+
+        return result_pools
+
     async def search_pois(
         self,
         city: str,
@@ -295,6 +407,7 @@ class DBPOIProvider(POIProvider):
         city_center_lon: Optional[float] = None,
         max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
         block_type: Optional[BlockType] = None,
+        search_keywords: Optional[list[str]] = None,
     ) -> list[POICandidate]:
         """Search internal database for matching POIs with radius and category filtering."""
         if not desired_categories:
@@ -360,6 +473,10 @@ class DBPOIProvider(POIProvider):
                 category=poi.category,
                 tags=poi.tags or [],
                 rating=poi.rating,
+                user_ratings_total=poi.user_ratings_total,
+                price_level=poi.price_level,
+                business_status=poi.business_status,
+                open_now=(poi.opening_hours or {}).get("open_now") if isinstance(poi.opening_hours, dict) else None,
                 location=poi.location,
                 lat=poi.lat,
                 lon=poi.lon,
@@ -405,20 +522,25 @@ class GooglePlacesPOIProvider(POIProvider):
         city: str,
         desired_categories: list[str],
         center_location: Optional[str] = None,
+        search_keywords: Optional[list[str]] = None,
     ) -> str:
         """Build search query for Google Places Text Search."""
         # Combine categories into a search-friendly query
         categories_text = " ".join(desired_categories[:3])  # Limit to avoid too long queries
+        keyword_text = ""
+        if search_keywords:
+            keyword_text = " " + " ".join(search_keywords[:3])
 
         if center_location:
-            return f"{categories_text} near {center_location}, {city}"
-        return f"{categories_text} in {city}"
+            return f"{categories_text}{keyword_text} near {center_location}, {city}"
+        return f"{categories_text}{keyword_text} in {city}"
 
     def _parse_place_result(self, place: dict) -> Optional[GooglePlaceResult]:
         """Parse a single place from Google Places API response."""
         try:
             geometry = place.get("geometry", {})
             location = geometry.get("location", {})
+            opening_hours = place.get("opening_hours", {})
 
             return GooglePlaceResult(
                 place_id=place["place_id"],
@@ -426,7 +548,10 @@ class GooglePlacesPOIProvider(POIProvider):
                 formatted_address=place.get("formatted_address", place.get("vicinity", "")),
                 types=place.get("types", []),
                 rating=place.get("rating"),
+                user_ratings_total=place.get("user_ratings_total"),
                 price_level=place.get("price_level"),
+                business_status=place.get("business_status"),
+                open_now=opening_hours.get("open_now") if isinstance(opening_hours, dict) else None,
                 lat=location.get("lat", 0.0),
                 lon=location.get("lng", 0.0),
             )
@@ -462,13 +587,14 @@ class GooglePlacesPOIProvider(POIProvider):
         desired_categories: list[str],
         limit: int,
         center_location: Optional[str] = None,
+        search_keywords: Optional[list[str]] = None,
     ) -> list[GooglePlaceResult]:
         """Fetch places from Google Places API."""
         if not self.api_key:
             logger.warning("Google Maps API key not configured, skipping external search")
             return []
 
-        query = self._build_search_query(city, desired_categories, center_location)
+        query = self._build_search_query(city, desired_categories, center_location, search_keywords)
 
         params = {
             "query": query,
@@ -542,7 +668,11 @@ class GooglePlacesPOIProvider(POIProvider):
             # Update existing record with fresh data
             existing.rating = place.rating
             existing.price_level = place.price_level
+            existing.user_ratings_total = place.user_ratings_total
+            existing.business_status = place.business_status
             existing.tags = tags
+            if place.open_now is not None:
+                existing.opening_hours = {"open_now": place.open_now}
             existing.updated_at = datetime.utcnow()
             poi_model = existing
         else:
@@ -554,12 +684,15 @@ class GooglePlacesPOIProvider(POIProvider):
                 category=category,
                 tags=tags,
                 rating=place.rating,
+                user_ratings_total=place.user_ratings_total,
                 location=place.formatted_address,
                 external_source=self.EXTERNAL_SOURCE,
                 external_id=place.place_id,
                 lat=place.lat,
                 lon=place.lon,
                 price_level=place.price_level,
+                business_status=place.business_status,
+                opening_hours={"open_now": place.open_now} if place.open_now is not None else None,
                 created_at=datetime.utcnow(),
             )
 
@@ -635,6 +768,7 @@ class GooglePlacesPOIProvider(POIProvider):
         city_center_lon: Optional[float] = None,
         max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
         block_type: Optional[BlockType] = None,
+        search_keywords: Optional[list[str]] = None,
     ) -> list[POICandidate]:
         """
         Search Google Places API for POIs and cache results.
@@ -651,6 +785,7 @@ class GooglePlacesPOIProvider(POIProvider):
             desired_categories=desired_categories,
             limit=limit * 3,  # Fetch more to allow for filtering
             center_location=center_location,
+            search_keywords=search_keywords,
         )
 
         if not places:
@@ -695,6 +830,10 @@ class GooglePlacesPOIProvider(POIProvider):
                 category=category,
                 tags=place.types,
                 rating=place.rating,
+                user_ratings_total=place.user_ratings_total,
+                price_level=place.price_level,
+                business_status=place.business_status,
+                open_now=place.open_now,
                 location=place.formatted_address,
                 lat=place.lat,
                 lon=place.lon,
@@ -746,6 +885,7 @@ class CompositePOIProvider(POIProvider):
         city_center_lon: Optional[float] = None,
         max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
         block_type: Optional[BlockType] = None,
+        search_keywords: Optional[list[str]] = None,
     ) -> list[POICandidate]:
         """
         Search POIs using composite strategy with radius and block type filtering.
@@ -768,6 +908,7 @@ class CompositePOIProvider(POIProvider):
             city_center_lon=city_center_lon,
             max_radius_km=max_radius_km,
             block_type=block_type,
+            search_keywords=search_keywords,
         )
 
         logger.debug(f"DB returned {len(db_results)} POIs for {city}")
@@ -790,6 +931,7 @@ class CompositePOIProvider(POIProvider):
                 city_center_lon=city_center_lon,
                 max_radius_km=max_radius_km,
                 block_type=block_type,
+                search_keywords=search_keywords,
             )
             logger.debug(f"External API returned {len(external_results)} POIs")
         except Exception as e:

@@ -138,12 +138,18 @@ async def get_or_create_guest_device(
 
 
 async def check_guest_trip_limit(
-    device: GuestDeviceModel = Depends(get_or_create_guest_device),
-) -> GuestDeviceModel:
+    device: GuestDeviceModel,
+) -> None:
     """
     Check if guest has reached trip generation limit.
     Raises 402 PAYWALL_REQUIRED if limit reached.
+
+    Skipped if FREEMIUM_ENABLED=false in settings.
     """
+    # Skip limit check if freemium is disabled
+    if not auth_settings.freemium_enabled:
+        return
+
     if device.generated_trips_count >= auth_settings.guest_max_trips:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -154,7 +160,6 @@ async def check_guest_trip_limit(
                 "limit": auth_settings.guest_max_trips,
             }
         )
-    return device
 
 
 class AuthContext:
@@ -244,7 +249,13 @@ def apply_guest_content_limit(itinerary, is_authenticated: bool):
     Returns:
         Modified itinerary with only Day 1 and is_locked=True for guests,
         or unchanged itinerary for authenticated users.
+
+    Note: Skipped if FREEMIUM_ENABLED=false in settings.
     """
+    # Skip content limit if freemium is disabled
+    if not auth_settings.freemium_enabled:
+        return itinerary
+
     if is_authenticated:
         return itinerary
 

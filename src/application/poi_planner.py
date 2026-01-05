@@ -29,6 +29,12 @@ from src.application.poi_selection_llm import (
     BlockContext,
     build_trip_context_from_response,
 )
+from src.application.poi_agent import (
+    POIPreferenceAgent,
+    POIPreferenceProfile,
+    score_candidate,
+    filter_candidates_for_block,
+)
 from src.infrastructure.poi_providers import POIProvider, get_poi_provider, haversine_distance_km
 from src.infrastructure.models import ItineraryModel
 from src.domain.models import POICandidate
@@ -165,6 +171,7 @@ class POIPlanner:
         self,
         trip_id: UUID,
         db: AsyncSession,
+        preference_profile: Optional[POIPreferenceProfile] = None,
     ) -> POIPlanResponse:
         """
         Generate POI plan for a trip.
@@ -188,6 +195,21 @@ class POIPlanner:
         macro_plan = await self.macro_planner.get_macro_plan(trip_id, db)
         if not macro_plan:
             raise ValueError(f"No macro plan found for trip {trip_id}. Generate macro plan first.")
+
+        # 2b. Build preference profile (POI agent)
+        poi_agent = POIPreferenceAgent(app_settings=self._settings)
+        if preference_profile is None:
+            preference_profile = await poi_agent.build_profile(trip_spec)
+
+        preference_summary = {
+            "must_include_keywords": preference_profile.must_include_keywords,
+            "avoid_keywords": preference_profile.avoid_keywords,
+            "search_keywords": preference_profile.search_keywords,
+            "category_boosts": preference_profile.category_boosts,
+            "tag_boosts": preference_profile.tag_boosts,
+            "min_rating": preference_profile.min_rating,
+            "preferred_price_levels": preference_profile.preferred_price_levels,
+        }
 
         # 3. Initialize POI provider if not set
         if not self.poi_provider:
@@ -223,13 +245,27 @@ class POIPlanner:
         poi_blocks = []
 
         # CRITICAL: Track POIs selected across ALL days to prevent duplicates in multi-day trips
-        trip_selected_poi_ids = []
+        trip_selected_poi_ids: set[UUID] = set()
+        previous_day_anchor: Optional[tuple[float, float]] = None
 
         for day in macro_plan.days:
             # Track POIs already selected for this day (for LLM deduplication)
-            day_selected_poi_ids = []
+            day_selected_poi_ids: set[UUID] = set()
             # Count POI-needing blocks in this day for hotel anchor
             poi_block_count_in_day = 0
+
+            day_block_candidates: dict[int, list[POICandidate]] = {}
+            day_block_contexts: dict[int, BlockContext] = {}
+
+            # Determine day-level anchor (previous day last POI, else hotel/city center)
+            day_anchor_lat = None
+            day_anchor_lon = None
+            if previous_day_anchor:
+                day_anchor_lat, day_anchor_lon = previous_day_anchor
+            elif trip_spec.hotel_lat is not None and trip_spec.hotel_lon is not None:
+                day_anchor_lat, day_anchor_lon = trip_spec.hotel_lat, trip_spec.hotel_lon
+            elif trip_spec.city_center_lat is not None and trip_spec.city_center_lon is not None:
+                day_anchor_lat, day_anchor_lon = trip_spec.city_center_lat, trip_spec.city_center_lon
 
             for block_index, block in enumerate(day.blocks):
                 # Skip blocks that don't need POIs
@@ -259,6 +295,9 @@ class POIPlanner:
                     city_center_lat=trip_spec.city_center_lat,
                     city_center_lon=trip_spec.city_center_lon,
                     block_type=block.block_type,
+                    search_keywords=preference_profile.search_keywords if (
+                        preference_profile and block.block_type == BlockType.MEAL
+                    ) else None,
                 )
 
                 # Apply hotel anchor bias for first N POI-needing blocks of the day
@@ -267,10 +306,14 @@ class POIPlanner:
                         f"Applying hotel anchor to day {day.day_number}, "
                         f"POI block {poi_block_count_in_day} of {hotel_anchor_blocks}"
                     )
+                    anchor_lat = trip_spec.hotel_lat
+                    anchor_lon = trip_spec.hotel_lon
+                    if previous_day_anchor:
+                        anchor_lat, anchor_lon = previous_day_anchor
                     candidates = self._apply_hotel_anchor_bias(
                         candidates=candidates,
-                        hotel_lat=trip_spec.hotel_lat,
-                        hotel_lon=trip_spec.hotel_lon,
+                        hotel_lat=anchor_lat,
+                        hotel_lon=anchor_lon,
                         distance_weight=hotel_anchor_weight,
                     )
 
@@ -288,16 +331,45 @@ class POIPlanner:
                     )
                     logger.info(f"Trip has {len(trip_selected_poi_ids)} unique POIs selected so far")
 
-                # Select final candidates
-                if self.use_llm_selection and candidates:
-                    # Use LLM to select from candidates
-                    day_context = DayContext(
-                        day_number=day.day_number,
-                        date=str(day.date),
-                        theme=day.theme,
-                        already_selected_poi_ids=day_selected_poi_ids.copy(),
+                # Preference-aware filtering and scoring
+                candidates = filter_candidates_for_block(
+                    candidates=candidates,
+                    profile=preference_profile,
+                    block_type=block.block_type,
+                )
+
+                anchor_lat = None
+                anchor_lon = None
+                if hotel_anchor_enabled and poi_block_count_in_day <= hotel_anchor_blocks:
+                    anchor_lat = trip_spec.hotel_lat
+                    anchor_lon = trip_spec.hotel_lon
+                    if previous_day_anchor:
+                        anchor_lat, anchor_lon = previous_day_anchor
+
+                scored_candidates = [
+                    (
+                        score_candidate(
+                            candidate=candidate,
+                            block_type=block.block_type,
+                            desired_categories=block.desired_categories,
+                            profile=preference_profile,
+                            anchor_lat=anchor_lat,
+                            anchor_lon=anchor_lon,
+                            day_center_lat=trip_spec.city_center_lat,
+                            day_center_lon=trip_spec.city_center_lon,
+                            distance_weight=self._settings.hotel_anchor_distance_weight,
+                        ),
+                        candidate,
                     )
-                    block_context = BlockContext(
+                    for candidate in candidates
+                ]
+                scored_candidates.sort(key=lambda item: item[0], reverse=True)
+                candidates = [candidate for _, candidate in scored_candidates]
+
+                day_block_candidates[block_index] = candidates
+
+                if self.use_llm_selection:
+                    day_block_contexts[block_index] = BlockContext(
                         block_index=block_index,
                         block_type=block.block_type,
                         start_time=str(block.start_time),
@@ -306,26 +378,78 @@ class POIPlanner:
                         desired_categories=block.desired_categories,
                     )
 
-                    selected_candidates = await self.poi_selection_llm.select_pois_for_block(
-                        trip_context=trip_context,
-                        day_context=day_context,
-                        block_context=block_context,
-                        candidates=candidates,
-                        max_results=self.CANDIDATES_PER_BLOCK,
-                    )
+            # Day-level LLM selection (one call per day)
+            selected_by_block: dict[int, POICandidate] = {}
+            if (
+                self.use_llm_selection
+                and self._settings.enable_day_level_poi_selection
+                and day_block_contexts
+            ):
+                day_context = DayContext(
+                    day_number=day.day_number,
+                    date=str(day.date),
+                    theme=day.theme,
+                    already_selected_poi_ids=list(trip_selected_poi_ids),
+                )
+                selected_by_block = await self.poi_selection_llm.select_pois_for_day(
+                    trip_context=trip_context,
+                    day_context=day_context,
+                    blocks=[day_block_contexts[idx] for idx in sorted(day_block_contexts)],
+                    candidates_by_block=day_block_candidates,
+                    already_selected_ids=set(trip_selected_poi_ids),
+                    max_hop_distance_km=self._settings.max_hop_distance_km,
+                    anchor_lat=day_anchor_lat,
+                    anchor_lon=day_anchor_lon,
+                    city_center_lat=trip_spec.city_center_lat,
+                    city_center_lon=trip_spec.city_center_lon,
+                    preference_summary=preference_summary,
+                )
 
-                    # Track selected POIs for both day-level AND trip-level deduplication
-                    for c in selected_candidates:
-                        day_selected_poi_ids.append(c.poi_id)
-                        trip_selected_poi_ids.append(c.poi_id)
+            for block_index, block in enumerate(day.blocks):
+                if not self._block_needs_pois(block.block_type):
+                    continue
 
+                candidates = day_block_candidates.get(block_index, [])
+
+                # Select final candidates
+                selected_candidates: list[POICandidate] = []
+                if selected_by_block.get(block_index):
+                    selected = selected_by_block[block_index]
+                    selected_candidates = [selected] + [
+                        c for c in candidates if c.poi_id != selected.poi_id
+                    ]
+                    selected_candidates = selected_candidates[:self.CANDIDATES_PER_BLOCK]
+                    day_selected_poi_ids.add(selected.poi_id)
+                    trip_selected_poi_ids.add(selected.poi_id)
                     candidates = selected_candidates
+                elif self.use_llm_selection and candidates:
+                    # Fallback to per-block LLM selection if day-level was skipped or incomplete
+                    day_context = DayContext(
+                        day_number=day.day_number,
+                        date=str(day.date),
+                        theme=day.theme,
+                        already_selected_poi_ids=list(day_selected_poi_ids),
+                    )
+                    block_context = day_block_contexts.get(block_index)
+                    if block_context:
+                        selected_candidates = await self.poi_selection_llm.select_pois_for_block(
+                            trip_context=trip_context,
+                            day_context=day_context,
+                            block_context=block_context,
+                            candidates=candidates,
+                            max_results=self.CANDIDATES_PER_BLOCK,
+                        )
+
+                    for c in selected_candidates:
+                        day_selected_poi_ids.add(c.poi_id)
+                        trip_selected_poi_ids.add(c.poi_id)
+
+                    candidates = selected_candidates if selected_candidates else candidates[:self.CANDIDATES_PER_BLOCK]
                 else:
                     # Deterministic mode: use candidates as-is (already sorted by rank_score)
-                    # Track for both day-level AND trip-level deduplication
                     for c in candidates[:self.CANDIDATES_PER_BLOCK]:
-                        day_selected_poi_ids.append(c.poi_id)
-                        trip_selected_poi_ids.append(c.poi_id)
+                        day_selected_poi_ids.add(c.poi_id)
+                        trip_selected_poi_ids.add(c.poi_id)
                     candidates = candidates[:self.CANDIDATES_PER_BLOCK]
 
                 # Create POIPlanBlock
@@ -337,6 +461,17 @@ class POIPlanner:
                     candidates=candidates,
                 )
                 poi_blocks.append(poi_block)
+
+            # Update previous-day anchor based on last selected POI in this day
+            last_poi = None
+            for block in reversed(poi_blocks):
+                if block.day_number != day.day_number:
+                    break
+                if block.candidates:
+                    last_poi = block.candidates[0]
+                    break
+            if last_poi and last_poi.lat is not None and last_poi.lon is not None:
+                previous_day_anchor = (last_poi.lat, last_poi.lon)
 
         # 5. Store in database
         created_at = datetime.utcnow()

@@ -16,8 +16,7 @@ enum APIEnvironment {
         switch self {
         case .development:
             // FastAPI dev server running locally
-            // Use Mac's local IP for iOS Simulator (127.0.0.1 doesn't work from simulator)
-            return URL(string: "http://192.168.0.110:8001/api")!
+            return URL(string: "http://localhost:8000/api")!
         case .staging:
             return URL(string: "https://staging-api.travelbuddy.com/api")!
         case .production:
@@ -33,8 +32,8 @@ struct AppConfig {
     /// Base URL for API requests
     static var baseURL: URL { environment.baseURL }
 
-    /// Request timeout for fast draft (30s - server guarantees response in <20s)
-    static let fastDraftTimeout: TimeInterval = 30
+    /// Request timeout for fast draft (90s - LLM + POI fetching can take 40-60s)
+    static let fastDraftTimeout: TimeInterval = 90
 
     /// Request timeout for full plan generation (5 min for background enrichment)
     static let fullPlanTimeout: TimeInterval = 300

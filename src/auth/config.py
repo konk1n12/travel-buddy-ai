@@ -99,6 +99,12 @@ class AuthSettings(BaseSettings):
         description="Maximum number of trips a guest can generate"
     )
 
+    # Freemium Gating (controls auth requirements)
+    freemium_enabled: bool = Field(
+        default=True,
+        description="Enable freemium restrictions (Day 1 only for guests, trip limit). Set to False to disable all auth requirements."
+    )
+
 
 # Global auth settings instance
 auth_settings = AuthSettings()

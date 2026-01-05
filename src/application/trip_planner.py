@@ -1,18 +1,27 @@
 """
 Trip Planner Orchestrator service.
 Coordinates the full planning pipeline: Macro Plan → POI Plan → Route & Time Optimization → Critique.
+
+Supports two modes:
+1. Classic mode: Macro Plan → POI Plan → Route Optimization (separate steps)
+2. Smart mode: Macro Plan → Smart Route Optimization (integrated POI + routing)
 """
+import logging
 from uuid import UUID
 from collections import Counter
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
 from src.domain.schemas import ItineraryResponse, CritiqueResponse, CritiqueIssueSchema
 from src.application.trip_spec import TripSpecCollector
 from src.application.macro_planner import MacroPlanner
 from src.application.poi_planner import POIPlanner
 from src.application.route_optimizer import RouteTimeOptimizer
 from src.application.trip_critic import TripCritic
+from src.application.poi_agent import POIPreferenceAgent
+
+logger = logging.getLogger(__name__)
 
 
 class TripPlannerOrchestrator:
@@ -45,6 +54,8 @@ class TripPlannerOrchestrator:
         """
         Execute full planning pipeline for a trip.
 
+        Uses smart district-based routing when enabled, falls back to classic pipeline.
+
         Args:
             trip_id: Trip UUID
             db: Database session
@@ -63,20 +74,43 @@ class TripPlannerOrchestrator:
         # 2. Generate macro plan if missing
         macro_plan = await self.macro_planner.get_macro_plan(trip_id, db)
         if not macro_plan:
-            # Generate macro plan
+            logger.info(f"Generating macro plan for trip {trip_id}")
             macro_plan = await self.macro_planner.generate_macro_plan(trip_id, db)
 
-        # 3. Generate POI plan if missing
-        poi_plan = await self.poi_planner.get_poi_plan(trip_id, db)
-        if not poi_plan:
-            # Generate POI plan
-            poi_plan = await self.poi_planner.generate_poi_plan(trip_id, db)
+        # 2b. Build preference profile once (POI agent)
+        preference_agent = POIPreferenceAgent(app_settings=settings)
+        preference_profile = await preference_agent.build_profile(trip_spec)
 
-        # 4. Generate final itinerary (always regenerate for now)
-        # In the future, we could cache this and only regenerate if macro/POI plans change
-        itinerary = await self.route_optimizer.generate_itinerary(trip_id, db)
+        # 3. Choose routing mode
+        if settings.enable_smart_routing:
+            # Smart mode: integrated POI selection + routing
+            logger.info(f"Using smart district-based routing for trip {trip_id}")
+            itinerary = await self.route_optimizer.generate_smart_itinerary(
+                trip_id,
+                db,
+                preference_profile=preference_profile,
+            )
+        else:
+            # Classic mode: separate POI plan + route optimization
+            logger.info(f"Using classic routing for trip {trip_id}")
 
-        # 5. Run Trip Critic for validation
+            # Generate POI plan if missing
+            poi_plan = await self.poi_planner.get_poi_plan(trip_id, db)
+            if not poi_plan:
+                poi_plan = await self.poi_planner.generate_poi_plan(
+                    trip_id,
+                    db,
+                    preference_profile=preference_profile,
+                )
+
+            # Generate final itinerary
+            itinerary = await self.route_optimizer.generate_itinerary(
+                trip_id,
+                db,
+                preference_profile=preference_profile,
+            )
+
+        # 4. Run Trip Critic for validation
         critique_issues = await self.trip_critic.critique_trip(trip_id, db)
         await self.trip_critic.store_critique(trip_id, critique_issues, db)
 

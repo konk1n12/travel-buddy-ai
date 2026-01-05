@@ -133,6 +133,8 @@ class TripSpecCollector:
         self,
         request: TripCreateRequest,
         db: AsyncSession,
+        user_id: Optional[UUID] = None,
+        device_id: Optional[str] = None,
     ) -> TripResponse:
         """
         Create a new trip from form inputs.
@@ -199,6 +201,8 @@ class TripSpecCollector:
             start_date=request.start_date,
             end_date=request.end_date,
             num_travelers=request.num_travelers,
+            user_id=user_id,
+            device_id=device_id,
             pace=request.pace,
             budget=request.budget,
             interests=translated_interests,
