@@ -16,7 +16,7 @@ enum APIEnvironment {
         switch self {
         case .development:
             // FastAPI dev server running locally
-            return URL(string: "http://localhost:8000/api")!
+            return URL(string: "http://host.docker.internal:8000/api")!
         case .staging:
             return URL(string: "https://staging-api.travelbuddy.com/api")!
         case .production:

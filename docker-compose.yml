@@ -23,6 +23,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: tripplanner_api
+    working_dir: /app
     ports:
       - "8000:8000"
     environment:
@@ -33,12 +34,13 @@ services:
       HOST: 0.0.0.0
       PORT: 8000
       DEBUG: ${DEBUG:-true}
+      PYTHONPATH: /app
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - .:/app
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
 
 volumes:
   postgres_data:
