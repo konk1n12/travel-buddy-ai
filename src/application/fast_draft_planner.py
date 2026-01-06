@@ -30,10 +30,10 @@ from src.infrastructure.models import ItineraryModel
 
 # Hard timeout for LLM call (seconds)
 # Keep short to avoid iOS request timeout (fast draft must be quick)
-LLM_TIMEOUT_SECONDS = 8
+LLM_TIMEOUT_SECONDS = 20
 
 # Maximum tokens for draft (reduced for speed)
-DRAFT_MAX_TOKENS = 512
+DRAFT_MAX_TOKENS = 1024
 
 # Block types that need POI candidates
 BLOCK_TYPES_NEEDING_POIS = {
@@ -202,7 +202,7 @@ Rules:
         prompt = f"""Trip: {trip_spec.city}, {num_days} days ({trip_spec.start_date} to {trip_spec.end_date})
 Pace: {trip_spec.pace.value}
 Budget: {trip_spec.budget.value}
-Interests: {', '.join(trip_spec.interests) if trip_spec.interests else 'general sightseeing'}
+Interests: {', '.join(trip_spec.interests or []) if trip_spec.interests else 'general sightseeing'}
 Wake: {trip_spec.daily_routine.wake_time}, Sleep: {trip_spec.daily_routine.sleep_time}
 
 Generate JSON skeleton with desired_categories for each block."""
@@ -385,7 +385,7 @@ Generate JSON skeleton with desired_categories for each block."""
             ))
 
             # Nightlife (only if interested and not last day)
-            if "nightlife" in [i.lower() for i in trip_spec.interests] and day_num < num_days:
+            if "nightlife" in [i.lower() for i in (trip_spec.interests or [])] and day_num < num_days:
                 blocks.append(SkeletonBlock(
                     block_type=BlockType.NIGHTLIFE,
                     start_time=time(22, 0),
@@ -482,6 +482,7 @@ Generate JSON skeleton with desired_categories for each block."""
             categories=all_categories_needed,
             budget=trip_spec.budget,
             db=db,
+            trip_spec=trip_spec,
             city_center_lat=trip_spec.city_center_lat,
             city_center_lon=trip_spec.city_center_lon,
         )
@@ -505,6 +506,10 @@ Generate JSON skeleton with desired_categories for each block."""
                         used_poi_ids=used_poi_ids,
                         day_number=skeleton.day_number,
                         block_index=block_index,
+                        trip_spec=trip_spec,
+                        db=db,
+                        city_center_lat=trip_spec.city_center_lat,
+                        city_center_lon=trip_spec.city_center_lon,
                         enable_extended_trace=enable_extended_trace,
                     )
 
@@ -536,12 +541,111 @@ Generate JSON skeleton with desired_categories for each block."""
 
         return days
 
+    def _normalize_category(self, category: str) -> str:
+        """Normalize a single category to a canonical value."""
+        alias_map = {
+            "breakfast": "cafe",
+            "bakery": "cafe",
+            "fine dining": "restaurant",
+            "local cuisine": "restaurant",
+            "viewpoint": "attraction",
+            "landmark": "attraction",
+            "culture": "museum",
+        }
+
+        key = category.lower()
+        mapped = alias_map.get(key, key)
+
+        # Heuristic mapping for common free-form categories
+        if any(token in key for token in ("restaurant", "cuisine", "dining", "food")):
+            mapped = "restaurant"
+        elif any(token in key for token in ("cafe", "coffee", "bakery")):
+            mapped = "cafe"
+        elif "bar" in key:
+            mapped = "bar"
+        elif any(token in key for token in ("museum", "gallery")):
+            mapped = "museum"
+        elif any(token in key for token in ("attraction", "landmark", "sight", "viewpoint")):
+            mapped = "attraction"
+        elif any(token in key for token in ("park", "garden")):
+            mapped = "park"
+        elif any(token in key for token in ("shopping", "market", "mall")):
+            mapped = "shopping"
+        elif any(token in key for token in ("nightlife", "club")):
+            mapped = "nightlife"
+        elif any(token in key for token in ("spa", "wellness", "gym")):
+            mapped = "wellness"
+
+        return mapped
+
+    def _normalize_categories(self, categories: set) -> tuple[set, dict]:
+        """Normalize desired categories to a smaller canonical set."""
+        normalized = set()
+        aliases = {}
+        for category in categories:
+            mapped = self._normalize_category(category)
+            normalized.add(mapped)
+            aliases[category] = mapped
+        return normalized, aliases
+
+    def _infer_block_type_for_category(self, category: str) -> BlockType:
+        """Infer block type from a category string for provider filtering."""
+        key = category.lower()
+        if key in {"restaurant", "cafe", "bar", "bakery", "food"}:
+            return BlockType.MEAL
+        if key in {"nightlife"}:
+            return BlockType.NIGHTLIFE
+        return BlockType.ACTIVITY
+
+    async def _fetch_category_pool(
+        self,
+        category: str,
+        trip_spec,
+        db: AsyncSession,
+        city_center_lat: Optional[float],
+        city_center_lon: Optional[float],
+        max_radius_km: float,
+        min_rating: float,
+        limit: int,
+        poi_provider: Optional["POIProvider"] = None,
+    ) -> list[POICandidate]:
+        """Fetch a POI pool for a category using the composite provider."""
+        provider = poi_provider
+        if provider is None:
+            if not self.poi_provider:
+                self.poi_provider = get_poi_provider(db)
+            provider = self.poi_provider
+
+        normalized_category = self._normalize_category(category)
+        block_type = self._infer_block_type_for_category(normalized_category)
+
+        candidates = await provider.search_pois(
+            city=trip_spec.city,
+            desired_categories=[normalized_category],
+            budget=trip_spec.budget,
+            limit=limit,
+            city_center_lat=city_center_lat,
+            city_center_lon=city_center_lon,
+            max_radius_km=max_radius_km,
+            block_type=block_type,
+        )
+
+        if not candidates:
+            return []
+
+        filtered = [c for c in candidates if (c.rating or 0) >= min_rating]
+        if len(filtered) >= 3:
+            return filtered
+
+        return candidates
+
     async def _fetch_poi_pools(
         self,
         city: str,
         categories: set,
         budget: BudgetLevel,
         db: AsyncSession,
+        trip_spec,
         city_center_lat: Optional[float] = None,
         city_center_lon: Optional[float] = None,
     ) -> dict:
@@ -590,6 +694,38 @@ Generate JSON skeleton with desired_categories for each block."""
             include_tags=False,
         )
 
+        # Fill missing categories via composite provider (DB + external)
+        missing_categories = [
+            category for category in normalized_categories
+            if not base_pools.get(category)
+        ]
+        if missing_categories:
+            from src.infrastructure.database import AsyncSessionLocal
+
+            semaphore = asyncio.Semaphore(5)
+
+            async def fetch_one(category: str) -> tuple[str, list[POICandidate]]:
+                async with semaphore:
+                    async with AsyncSessionLocal() as session:
+                        provider = get_poi_provider(session)
+                        candidates = await self._fetch_category_pool(
+                            category=category,
+                            trip_spec=trip_spec,
+                            db=session,
+                            city_center_lat=city_center_lat,
+                            city_center_lon=city_center_lon,
+                            max_radius_km=max_radius_km,
+                            min_rating=4.0,
+                            limit=12,
+                            poi_provider=provider,
+                        )
+                        return category, candidates
+
+            results = await asyncio.gather(*[fetch_one(cat) for cat in missing_categories])
+            for category, candidates in results:
+                if candidates:
+                    base_pools[category] = candidates
+
         # Expand pools to original aliases so selection can use original categories
         poi_pools = {}
         for original_category in categories:
@@ -606,48 +742,6 @@ Generate JSON skeleton with desired_categories for each block."""
 
         return poi_pools
 
-    def _normalize_categories(self, categories: set) -> tuple[set, dict]:
-        """Normalize desired categories to a smaller canonical set."""
-        alias_map = {
-            "breakfast": "cafe",
-            "bakery": "cafe",
-            "fine dining": "restaurant",
-            "local cuisine": "restaurant",
-            "viewpoint": "attraction",
-            "landmark": "attraction",
-            "culture": "museum",
-        }
-
-        normalized = set()
-        aliases = {}
-        for category in categories:
-            key = category.lower()
-            mapped = alias_map.get(key, key)
-
-            # Heuristic mapping for common free-form categories
-            if any(token in key for token in ("restaurant", "cuisine", "dining", "food")):
-                mapped = "restaurant"
-            elif any(token in key for token in ("cafe", "coffee", "bakery")):
-                mapped = "cafe"
-            elif "bar" in key:
-                mapped = "bar"
-            elif any(token in key for token in ("museum", "gallery")):
-                mapped = "museum"
-            elif any(token in key for token in ("attraction", "landmark", "sight", "viewpoint")):
-                mapped = "attraction"
-            elif any(token in key for token in ("park", "garden")):
-                mapped = "park"
-            elif any(token in key for token in ("shopping", "market", "mall")):
-                mapped = "shopping"
-            elif any(token in key for token in ("nightlife", "club")):
-                mapped = "nightlife"
-            elif any(token in key for token in ("spa", "wellness", "gym")):
-                mapped = "wellness"
-
-            normalized.add(mapped)
-            aliases[category] = mapped
-        return normalized, aliases
-
     async def _select_poi_from_pool(
         self,
         skeleton_block,
@@ -655,6 +749,10 @@ Generate JSON skeleton with desired_categories for each block."""
         used_poi_ids: set,
         day_number: int,
         block_index: int,
+        trip_spec,
+        db: AsyncSession,
+        city_center_lat: Optional[float],
+        city_center_lon: Optional[float],
         enable_extended_trace: bool = False,
     ):
         """
@@ -671,31 +769,49 @@ Generate JSON skeleton with desired_categories for each block."""
         import random
         from src.domain.route_trace import BlockSelectionTrace
 
-        primary_category = skeleton_block.desired_categories[0] if skeleton_block.desired_categories else "general"
+        desired_categories = skeleton_block.desired_categories or []
 
-        # Get pool for this category
-        pool = poi_pools.get(primary_category, [])
+        fallback_categories: list[str]
+        if skeleton_block.block_type == BlockType.MEAL:
+            fallback_categories = ["restaurant", "cafe", "bar"]
+        elif skeleton_block.block_type == BlockType.NIGHTLIFE:
+            fallback_categories = ["nightlife", "bar"]
+        else:
+            fallback_categories = ["attraction", "museum", "park", "shopping"]
 
-        if not pool:
-            print(f"⚠️ No POI pool for category '{primary_category}'")
-            return None, None
+        candidate_categories = []
+        for category in desired_categories + fallback_categories:
+            if category not in candidate_categories:
+                candidate_categories.append(category)
 
-        # Filter out used POIs
-        available_pois = [p for p in pool if p.poi_id not in used_poi_ids]
+        available_pois: list[POICandidate] = []
+        for category in candidate_categories:
+            pool = poi_pools.get(category, [])
 
-        # If no available POIs in primary category, try OTHER desired_categories from the block
-        if not available_pois and len(skeleton_block.desired_categories) > 1:
-            print(f"⚠️ All POIs used in '{primary_category}', trying other desired categories...")
-            for alt_category in skeleton_block.desired_categories[1:]:
-                alt_pool = poi_pools.get(alt_category, [])
-                available_pois = [p for p in alt_pool if p.poi_id not in used_poi_ids]
-                if available_pois:
-                    print(f"  ✓ Found {len(available_pois)} unused POIs in '{alt_category}'")
-                    break
+            if not pool:
+                pool = await self._fetch_category_pool(
+                    category=category,
+                    trip_spec=trip_spec,
+                    db=db,
+                    city_center_lat=city_center_lat,
+                    city_center_lon=city_center_lon,
+                    max_radius_km=50.0,
+                    min_rating=4.0,
+                    limit=12,
+                )
+                if pool:
+                    poi_pools[category] = pool
 
-        # If still no POIs in ANY desired category, return None (better than wrong category)
+            if pool:
+                available_pois = [p for p in pool if p.poi_id not in used_poi_ids]
+            if available_pois:
+                break
+
         if not available_pois:
-            print(f"❌ No available POIs in desired categories {skeleton_block.desired_categories} for day {day_number}, block {block_index}")
+            print(
+                f"❌ No available POIs in desired categories {desired_categories} "
+                f"for day {day_number}, block {block_index}"
+            )
             return None, None
 
         # Randomly select up to 10 candidates

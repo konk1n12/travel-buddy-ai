@@ -16,6 +16,7 @@ from src.config import settings
 
 # Import all models to ensure they're registered with Base.metadata
 from src.infrastructure.models import TripModel, POIModel, ItineraryModel
+from src.auth import models as auth_models
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

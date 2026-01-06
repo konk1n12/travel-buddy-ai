@@ -204,6 +204,10 @@ final class TripSummaryCalculator {
             return (backendTotal, true)
         }
 
+        if activities.count < 2 {
+            return (0, false)
+        }
+
         // Fallback: calculate haversine distances between consecutive POIs
         var haversineTotal: Double = 0
         var hasAnyCoordinates = false

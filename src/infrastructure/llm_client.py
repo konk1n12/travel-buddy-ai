@@ -1,10 +1,6 @@
-"""
-Provider-agnostic LLM client abstraction.
-Supports multiple providers: IO Intelligence (io.net) and Anthropic Claude.
-"""
+import json
 from abc import ABC, abstractmethod
 from typing import Optional
-import json
 
 import anyio
 from openai import OpenAI

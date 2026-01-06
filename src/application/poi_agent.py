@@ -13,7 +13,7 @@ from typing import Optional
 
 from src.config import settings, Settings
 from src.domain.models import POICandidate, BlockType, BudgetLevel, PaceLevel
-from src.domain.schemas import TripResponse
+from src.domain.schemas import TripResponse, StructuredPreference
 from src.infrastructure.llm_client import LLMClient, get_poi_selection_llm_client
 from src.infrastructure.poi_providers import haversine_distance_km
 
@@ -33,6 +33,7 @@ class POIPreferenceProfile:
     rating_weight: float = 1.0
     popularity_weight: float = 0.25
     price_level_weight: float = 1.5
+    structured_preferences: list[StructuredPreference] = field(default_factory=list)
 
 
 class POIPreferenceAgent:
@@ -71,12 +72,16 @@ Constraints:
         if not self._settings.use_llm_for_poi_preferences:
             return self._build_heuristic_profile(trip_spec)
 
+        # Convert structured preferences to a dict for the prompt
+        structured_prefs_dict = [p.model_dump() for p in trip_spec.structured_preferences]
+
         payload = {
             "city": trip_spec.city,
             "pace": trip_spec.pace.value if isinstance(trip_spec.pace, PaceLevel) else str(trip_spec.pace),
             "budget": trip_spec.budget.value if isinstance(trip_spec.budget, BudgetLevel) else str(trip_spec.budget),
             "interests": trip_spec.interests,
             "additional_preferences": trip_spec.additional_preferences or {},
+            "structured_preferences": structured_prefs_dict,
         }
 
         prompt = f"""Trip preferences (JSON):
@@ -102,7 +107,10 @@ Return JSON with this exact schema:
                 system_prompt=self.SYSTEM_PROMPT,
                 max_tokens=512,
             )
-            return self._parse_profile_response(response, trip_spec)
+            profile = self._parse_profile_response(response, trip_spec)
+            # Make sure to carry over the structured preferences
+            profile.structured_preferences = trip_spec.structured_preferences
+            return profile
         except Exception as exc:
             logger.warning(f"POI preference LLM failed, using heuristics: {exc}")
             return self._build_heuristic_profile(trip_spec)
@@ -130,6 +138,7 @@ Return JSON with this exact schema:
             rating_weight=float(response.get("rating_weight", 1.0)),
             popularity_weight=float(response.get("popularity_weight", 0.25)),
             price_level_weight=float(response.get("price_level_weight", 1.5)),
+            structured_preferences=trip_spec.structured_preferences, # Carry over from trip spec
         )
 
         if profile.min_rating < 3.5 or profile.min_rating > 4.8:
@@ -144,6 +153,7 @@ Return JSON with this exact schema:
         text = f"{interests} {prefs}"
 
         profile = POIPreferenceProfile()
+        profile.structured_preferences = trip_spec.structured_preferences # Always carry over
 
         if "michelin" in text or "star restaurant" in text or "fine dining" in text:
             profile.must_include_keywords = ["michelin", "fine dining", "tasting"]
@@ -155,6 +165,10 @@ Return JSON with this exact schema:
         if "budget" in text or "cheap" in text:
             profile.preferred_price_levels = [0, 1]
             profile.min_rating = min(profile.min_rating, 4.2)
+        
+        if "expensive" in text:
+            profile.preferred_price_levels = [3, 4]
+            profile.min_rating = 4.4
 
         if "nightlife" in text:
             profile.category_boosts["nightlife"] = 1.5
@@ -164,6 +178,18 @@ Return JSON with this exact schema:
 
         if "food" in text or "gastronomy" in text:
             profile.category_boosts.update({"restaurant": 1.5, "cafe": 1.1})
+
+        # Process structured preferences to populate other profile fields
+        for sp in profile.structured_preferences:
+            if sp.keyword:
+                profile.search_keywords.append(sp.keyword)
+                profile.must_include_keywords.append(sp.keyword)
+            if sp.price_level == "expensive":
+                profile.preferred_price_levels = [3, 4]
+            elif sp.price_level == "moderate":
+                profile.preferred_price_levels = [2]
+            elif sp.price_level == "cheap":
+                profile.preferred_price_levels = [0, 1]
 
         return profile
 
@@ -210,6 +236,22 @@ def score_candidate(
     for keyword in profile.avoid_keywords:
         if keyword in haystack:
             score -= 5.0
+            
+    # Huge boost for matching structured preferences
+    for sp in profile.structured_preferences:
+        matches = True
+        if sp.keyword and sp.keyword.lower() not in haystack:
+            matches = False
+        if sp.category and sp.category.lower() not in candidate.category.lower():
+            matches = False
+        
+        price_map = {"cheap": [0,1], "moderate": [2], "expensive": [3,4]}
+        if sp.price_level and candidate.price_level is not None:
+            if candidate.price_level not in price_map.get(sp.price_level, []):
+                matches = False
+
+        if matches:
+            score += 50.0  # Very strong boost for matching a specific request
 
     if candidate.business_status and candidate.business_status.upper() != "OPERATIONAL":
         score -= 2.5
@@ -256,6 +298,28 @@ def filter_candidates_for_block(
         ]
         if operational:
             filtered = operational
+
+    # If there are structured preferences for this block type, try to match them
+    block_category_map = {
+        BlockType.MEAL: ["restaurant", "cafe"],
+        BlockType.ACTIVITY: ["museum", "attraction", "park"],
+        BlockType.NIGHTLIFE: ["bar", "nightclub"],
+    }
+    
+    applicable_sp = [
+        sp for sp in profile.structured_preferences 
+        if sp.category in block_category_map.get(block_type, [])
+    ]
+
+    if applicable_sp:
+        matched = []
+        for sp in applicable_sp:
+            for candidate in filtered:
+                haystack = f"{candidate.name} {' '.join(candidate.tags or [])}".lower()
+                if sp.keyword and sp.keyword.lower() in haystack:
+                    matched.append(candidate)
+        if matched:
+            return matched
 
     if profile.must_include_keywords and block_type == BlockType.MEAL:
         matched = []

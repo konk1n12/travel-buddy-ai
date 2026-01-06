@@ -3,7 +3,7 @@ Configuration management for the Trip Planning backend.
 Uses Pydantic Settings to load configuration from environment variables.
 """
 from typing import Optional
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,6 +38,19 @@ class Settings(BaseSettings):
         default="https://api.intelligence.io.solutions/api/v1/",
         description="Base URL for IO Intelligence API"
     )
+
+    @model_validator(mode='after')
+    def check_api_keys(self) -> 'Settings':
+        if self.llm_provider == 'ionet':
+            if not self.ionet_api_key:
+                raise ValueError(
+                    "IONET_API_KEY is not set. "
+                    "Please provide a valid API key in your .env file."
+                )
+        elif self.llm_provider == 'anthropic':
+            if not self.anthropic_api_key:
+                raise ValueError("ANTHROPIC_API_KEY is not set.")
+        return self
 
     # Anthropic Claude (legacy/alternative provider)
     anthropic_api_key: Optional[str] = Field(

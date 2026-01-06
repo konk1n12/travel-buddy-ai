@@ -145,6 +145,8 @@ CRITICAL RULES:
             "price_level": candidate.price_level,
             "business_status": candidate.business_status,
             "open_now": candidate.open_now,
+            "description": candidate.description,
+            "reviews": candidate.reviews[:2] if candidate.reviews else [],
             "rank_score": round(candidate.rank_score, 2),
             "location": candidate.location[:100] if candidate.location else "",  # Truncate
         }

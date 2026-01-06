@@ -18,6 +18,7 @@ from src.domain.models import (
     ItineraryDay,
     CritiqueIssue,
     CritiqueIssueSeverity,
+    StructuredPreference,
 )
 
 
@@ -66,6 +67,25 @@ class TripCreateRequest(BaseModel):
         }
 
 
+    additional_preferences: Optional[dict] = Field(default=None, description="Additional preferences")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "pace": "fast",
+                "interests": ["food", "culture", "nightlife", "techno parties"],
+                "additional_preferences": {
+                    "note": "We hate museums",
+                    "music_preference": "techno"
+                }
+            }
+        }
+
+
+class TripUpdateRequest(BaseModel):
+    """Request schema for updating an existing trip (partial updates)."""
+
+
 class TripUpdateRequest(BaseModel):
     """Request schema for updating an existing trip (partial updates)."""
     city: Optional[str] = Field(default=None, min_length=1, max_length=100)
@@ -81,6 +101,7 @@ class TripUpdateRequest(BaseModel):
     hotel_location: Optional[str] = Field(default=None, max_length=500)
 
     additional_preferences: Optional[dict] = Field(default=None, description="Additional preferences")
+    structured_preferences: Optional[list[StructuredPreference]] = Field(default=None, description="Structured user preferences")
 
     class Config:
         json_schema_extra = {
@@ -90,7 +111,15 @@ class TripUpdateRequest(BaseModel):
                 "additional_preferences": {
                     "note": "We hate museums",
                     "music_preference": "techno"
-                }
+                },
+                "structured_preferences": [
+                    {
+                        "keyword": "georgian",
+                        "category": "restaurant",
+                        "price_level": "expensive",
+                        "quantity": 2
+                    }
+                ]
             }
         }
 
@@ -124,6 +153,7 @@ class TripResponse(BaseModel):
     hotel_lon: Optional[float] = Field(default=None, description="Hotel longitude (geocoded)")
 
     additional_preferences: dict
+    structured_preferences: list[StructuredPreference] = Field(default_factory=list)
 
     created_at: str = Field(description="ISO 8601 timestamp")
     updated_at: str = Field(description="ISO 8601 timestamp")
@@ -170,15 +200,22 @@ class TripChatRequest(BaseModel):
         }
 
 
+class TripUpdates(BaseModel):
+    interests: Optional[list[str]] = Field(default_factory=list)
+    pace: Optional[PaceLevel] = None
+    budget: Optional[BudgetLevel] = None
+    additional_preferences: Optional[dict[str, Any]] = Field(default_factory=dict)
+    structured_preferences: Optional[list[StructuredPreference]] = Field(default_factory=list)
+
 class TripChatLLMResponse(BaseModel):
     """
     Structured response from LLM in Trip Chat Mode.
     The LLM is expected to return JSON matching this schema.
     """
     assistant_message: str = Field(description="Friendly reply to the user")
-    trip_updates: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Fields to update in TripSpec (e.g., interests, additional_preferences)"
+    trip_updates: TripUpdates = Field(
+        default_factory=TripUpdates,
+        description="Fields to update in TripSpec"
     )
 
     class Config:

@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.domain.models import TripSpec, DailyRoutine
+from src.domain.models import TripSpec, DailyRoutine, StructuredPreference
 from src.domain.schemas import TripCreateRequest, TripUpdateRequest, TripResponse, DailyRoutineResponse
 from src.infrastructure.models import TripModel
 from src.infrastructure.geocoding import get_geocoding_service
@@ -102,6 +102,15 @@ class TripSpecCollector:
     def _trip_model_to_response(trip_model: TripModel) -> TripResponse:
         """Convert TripModel (ORM) to TripResponse (API response)."""
         daily_routine = TripSpecCollector._dict_to_daily_routine(trip_model.daily_routine)
+        
+        # Safely parse structured_preferences
+        structured_prefs = []
+        if trip_model.structured_preferences:
+            try:
+                # It's already a list of dicts from the JSON column
+                structured_prefs = [StructuredPreference(**p) for p in trip_model.structured_preferences]
+            except Exception as e:
+                logger.warning(f"Failed to parse structured_preferences from DB: {e}")
 
         return TripResponse(
             id=trip_model.id,
@@ -113,7 +122,7 @@ class TripSpecCollector:
             num_travelers=trip_model.num_travelers,
             pace=trip_model.pace,
             budget=trip_model.budget,
-            interests=trip_model.interests,
+            interests=trip_model.interests or [],
             daily_routine=DailyRoutineResponse(
                 wake_time=daily_routine.wake_time,
                 sleep_time=daily_routine.sleep_time,
@@ -125,6 +134,7 @@ class TripSpecCollector:
             hotel_lat=trip_model.hotel_lat,
             hotel_lon=trip_model.hotel_lon,
             additional_preferences=trip_model.additional_preferences,
+            structured_preferences=structured_prefs,
             created_at=trip_model.created_at.isoformat() + "Z",
             updated_at=trip_model.updated_at.isoformat() + "Z",
         )
@@ -326,6 +336,11 @@ class TripSpecCollector:
                 trip_model.hotel_lon = None
         if request.additional_preferences is not None:
             trip_model.additional_preferences = request.additional_preferences
+        if request.structured_preferences is not None:
+            # Append new structured preferences to existing ones
+            existing_prefs = trip_model.structured_preferences or []
+            new_prefs_as_dicts = [p.model_dump() for p in request.structured_preferences]
+            trip_model.structured_preferences = existing_prefs + new_prefs_as_dicts
 
         # Update daily routine if provided
         if request.daily_routine is not None:

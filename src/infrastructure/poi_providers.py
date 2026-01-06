@@ -565,13 +565,19 @@ class GooglePlacesPOIProvider(POIProvider):
         desired_categories: list[str],
     ) -> str:
         """Map Google Places types to our category taxonomy."""
+        # Prioritize the primary Google type
+        if google_types:
+            primary_type = google_types[0]
+            if primary_type in GOOGLE_TYPE_TO_CATEGORY:
+                return GOOGLE_TYPE_TO_CATEGORY[primary_type]
+
         # First, try to match with desired categories
         for gtype in google_types:
             mapped = GOOGLE_TYPE_TO_CATEGORY.get(gtype)
             if mapped and mapped in desired_categories:
                 return mapped
 
-        # Otherwise, use the first matching type
+        # Otherwise, use the first matching type from the remaining types
         for gtype in google_types:
             if gtype in GOOGLE_TYPE_TO_CATEGORY:
                 return GOOGLE_TYPE_TO_CATEGORY[gtype]
@@ -643,10 +649,10 @@ class GooglePlacesPOIProvider(POIProvider):
     ) -> POIModel:
         """
         Cache a Google Place result to the database.
-
-        Handles race conditions when multiple parallel fetches try to insert the same POI.
+        Fetches full details before caching.
         """
         from sqlalchemy.exc import IntegrityError
+        from src.infrastructure.google_place_details import fetch_place_details
 
         # Check if already exists
         result = await self.db.execute(
@@ -659,18 +665,26 @@ class GooglePlacesPOIProvider(POIProvider):
         )
         existing = result.scalars().first()
 
-        category = self._map_google_types_to_category(place.types, desired_categories)
+        # Fetch full details from Google
+        try:
+            details = await fetch_place_details(place.place_id)
+        except Exception as e:
+            logger.warning(f"Failed to fetch details for {place.name}: {e}")
+            details = None
 
-        # Combine Google types with our category as tags
+        category = self._map_google_types_to_category(place.types, desired_categories)
         tags = list(set(place.types + [category]))
 
         if existing:
-            # Update existing record with fresh data
+            # Update existing record
             existing.rating = place.rating
             existing.price_level = place.price_level
             existing.user_ratings_total = place.user_ratings_total
             existing.business_status = place.business_status
             existing.tags = tags
+            if details:
+                existing.description = details.editorial_summary
+                existing.reviews = [r.text for r in details.reviews]
             if place.open_now is not None:
                 existing.opening_hours = {"open_now": place.open_now}
             existing.updated_at = datetime.utcnow()
@@ -692,16 +706,16 @@ class GooglePlacesPOIProvider(POIProvider):
                 lon=place.lon,
                 price_level=place.price_level,
                 business_status=place.business_status,
+                description=details.editorial_summary if details else None,
+                reviews=[r.text for r in details.reviews] if details else [],
                 opening_hours={"open_now": place.open_now} if place.open_now is not None else None,
                 created_at=datetime.utcnow(),
             )
 
             try:
                 self.db.add(poi_model)
-                await self.db.flush()  # Flush to catch IntegrityError before commit
+                await self.db.flush()
             except IntegrityError:
-                # Race condition: another parallel fetch already inserted this POI
-                # Rollback and fetch the existing record
                 await self.db.rollback()
                 result = await self.db.execute(
                     select(POIModel).where(
@@ -713,7 +727,6 @@ class GooglePlacesPOIProvider(POIProvider):
                 )
                 poi_model = result.scalars().first()
                 if not poi_model:
-                    # Should never happen, but just in case
                     raise RuntimeError(f"POI {place.place_id} disappeared after IntegrityError")
 
         return poi_model
@@ -783,7 +796,7 @@ class GooglePlacesPOIProvider(POIProvider):
         places = await self._fetch_from_google(
             city=city,
             desired_categories=desired_categories,
-            limit=limit * 3,  # Fetch more to allow for filtering
+            limit=limit * 2,  # Fetch more to allow for filtering
             center_location=center_location,
             search_keywords=search_keywords,
         )
@@ -793,37 +806,29 @@ class GooglePlacesPOIProvider(POIProvider):
 
         has_city_center = city_center_lat is not None and city_center_lon is not None
 
-        # Cache to database and build candidates (with filtering)
+        # Filter, cache, and build candidates
         candidates = []
         for place in places:
-            # Radius filtering: skip places outside max radius
+            if len(candidates) >= limit:
+                break
+
+            # Radius filtering
             if has_city_center:
                 distance_km = haversine_distance_km(
                     city_center_lat, city_center_lon, place.lat, place.lon
                 )
                 if distance_km > max_radius_km:
-                    logger.info(
-                        f"⊘ Excluded Google Place '{place.name}' - {distance_km:.1f}km from city center "
-                        f"(max: {max_radius_km}km) - Address: {place.formatted_address[:50]}"
-                    )
                     continue
 
-            # Map to category
             category = self._map_google_types_to_category(place.types, desired_categories)
-
-            # BlockType filtering: skip places that don't match the block type
             if block_type and not is_poi_suitable_for_block_type(
                 place.name, category, place.types, block_type
             ):
                 continue
 
-            # Cache to DB
             poi_model = await self._cache_place_to_db(place, city, desired_categories)
-
-            # Calculate score
             score = self._calculate_relevance_score(place, desired_categories, budget)
 
-            # Build candidate
             candidate = POICandidate(
                 poi_id=poi_model.id,
                 name=place.name,
@@ -837,16 +842,16 @@ class GooglePlacesPOIProvider(POIProvider):
                 location=place.formatted_address,
                 lat=place.lat,
                 lon=place.lon,
+                description=poi_model.description,
+                reviews=poi_model.reviews,
                 rank_score=score,
             )
             candidates.append(candidate)
 
-        # Commit cached POIs
         await self.db.commit()
 
-        # Sort by score and limit
         candidates.sort(key=lambda c: c.rank_score, reverse=True)
-        return candidates[:limit]
+        return candidates
 
 
 # Keep ExternalPOIProvider as an alias for backward compatibility

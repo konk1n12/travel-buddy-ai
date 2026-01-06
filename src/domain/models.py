@@ -9,6 +9,14 @@ from pydantic import BaseModel, Field
 from uuid import UUID, uuid4
 
 
+class StructuredPreference(BaseModel):
+    """Represents a specific, structured user preference."""
+    keyword: str = Field(description="Search keyword (e.g., 'georgian', 'techno', 'art')")
+    category: str = Field(description="Corresponding POI category (e.g., 'restaurant', 'nightlife', 'museum')")
+    price_level: Optional[str] = Field(default=None, description="Price level ('cheap', 'moderate', 'expensive')")
+    quantity: Optional[int] = Field(default=None, description="Number of such places requested")
+
+
 # Enums for constrained values
 class PaceLevel(str, Enum):
     """Trip pace: how packed the schedule should be."""
@@ -59,7 +67,6 @@ class DailyRoutine(BaseModel):
         description="Preferred dinner time window"
     )
 
-
 class TripSpec(BaseModel):
     """
     Consolidated trip specification combining form inputs and chat context.
@@ -83,9 +90,11 @@ class TripSpec(BaseModel):
     hotel_lon: Optional[float] = Field(default=None, description="Hotel longitude (geocoded from hotel_location)")
 
     additional_preferences: dict = Field(default_factory=dict, description="Additional preferences from chat")
+    structured_preferences: list[StructuredPreference] = Field(default_factory=list, description="Structured preferences from chat")
 
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+
 
 
 class SkeletonBlock(BaseModel):
@@ -119,6 +128,8 @@ class POICandidate(BaseModel):
     location: str = Field(description="Address or location")
     lat: Optional[float] = Field(default=None, description="Latitude coordinate")
     lon: Optional[float] = Field(default=None, description="Longitude coordinate")
+    description: Optional[str] = Field(default=None, description="A short description of the place")
+    reviews: Optional[list[str]] = Field(default=None, description="A list of user reviews")
     rank_score: float = Field(default=0.0, description="Ranking score for this candidate")
 
 

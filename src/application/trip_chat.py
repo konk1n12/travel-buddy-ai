@@ -9,11 +9,10 @@ import json
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.domain.schemas import TripChatLLMResponse, TripChatResponse, TripUpdateRequest
+from src.domain.schemas import TripChatLLMResponse, TripChatResponse, TripUpdateRequest, TripUpdates
 from src.application.trip_spec import TripSpecCollector
 from src.infrastructure.llm_client import LLMClient, get_trip_chat_llm_client
 from src.infrastructure.cache import ChatCache, get_chat_cache
-
 
 class TripChatAssistant:
     """
@@ -22,33 +21,44 @@ class TripChatAssistant:
     """
 
     # System prompt for Trip Chat Mode (Russian language)
-    SYSTEM_PROMPT = """Ты — дружелюбный помощник по планированию путешествий. Твоя задача:
-1. Понять предпочтения, ограничения и пожелания пользователя о поездке
-2. Ответить коротким, дружелюбным сообщением на русском языке (1-2 предложения)
-3. Извлечь структурированные обновления для спецификации поездки
+    SYSTEM_PROMPT = """Ты — дружелюбный и очень внимательный помощник по планированию путешествий. Твоя задача:
+1. Понять предпочтения, ограничения и, что самое важное, КОНКРЕТНЫЕ запросы пользователя о поездке.
+2. Ответить коротким, дружелюбным сообщением на русском языке (1-2 предложения), подтверждая, что ты понял запрос.
+3. Извлечь структурированные обновления для спецификации поездки, включая ОБЩИЕ предпочтения и КОНКРЕТНЫЕ запросы.
 
-Пользователь планирует поездку и может сказать что-то вроде:
-- Предпочтения: "Мы любим техно музыку", "Предпочитаем вегетарианскую еду"
-- Ограничения: "Мы не любим музеи", "Избегайте туристических мест"
-- Изменения расписания: "Хотим поспать подольше", "Предпочитаем поздние ужины"
+Пользователь может сказать что-то вроде:
+- Общие предпочтения: "Мы любим техно музыку", "Предпочитаем вегетарианскую еду"
+- Конкретные запросы: "Найди 2-3 самых дорогих грузинских ресторана", "Я хочу в музей современного искусства", "добавь в план одну кофейню с хорошим рейтингом"
 
 Ты ДОЛЖЕН отвечать валидным JSON в точно таком формате:
 {
   "assistant_message": "Твой дружелюбный ответ на русском языке",
   "trip_updates": {
-    "interests": ["список", "интересов"],
+    "interests": ["список", "общих", "интересов"],
     "additional_preferences": {
       "любой_ключ": "любое_значение"
-    }
+    },
+    "structured_preferences": [
+      {
+        "keyword": "например, 'грузинский'",
+        "category": "restaurant",
+        "price_level": "expensive",
+        "quantity": 2
+      }
+    ]
   }
 }
 
 Правила для trip_updates:
-- Включай только поля, которые нужно обновить на основе сообщения пользователя
-- interests: список интересов/предпочтений (еда, культура, ночная жизнь, техно и т.д.)
-- additional_preferences: произвольный словарь для других предпочтений
-- НЕ включай поля city, dates, num_travelers, если они явно не изменились
-- Если сообщение не требует обновлений, установи trip_updates в {}
+- interests: список ОБЩИХ интересов/предпочтений (еда, культура, ночная жизнь).
+- additional_preferences: произвольный словарь для ДРУГИХ общих предпочтений.
+- structured_preferences: список для КОНКРЕТНЫХ, структурированных запросов.
+  - "keyword": Ключевое слово для поиска (например, "грузинский", "кофе", "современное искусство").
+  - "category": Категория POI (например, "restaurant", "cafe", "museum", "park").
+  - "price_level": Уровень цен ("cheap", "moderate", "expensive"). Определяй из контекста.
+  - "quantity": Количество таких мест, если указано.
+- Если сообщение не требует обновлений, оставь trip_updates пустым ({}).
+- Если запрос не содержит конкретики, `structured_preferences` должен быть пустым списком `[]`.
 
 ВАЖНО: Поле assistant_message ВСЕГДА должно быть на русском языке!
 Будь дружелюбным, кратким и подтверждай понимание пожеланий пользователя."""
@@ -78,30 +88,27 @@ class TripChatAssistant:
 
 Ответь только JSON."""
 
-    def _safe_apply_trip_updates(self, trip_updates: dict) -> TripUpdateRequest:
+    def _safe_apply_trip_updates(self, trip_updates: TripUpdates) -> TripUpdateRequest:
         """
-        Safely convert LLM trip_updates dict to TripUpdateRequest.
+        Safely convert LLM trip_updates model to TripUpdateRequest.
         Only allows updating specific allowed fields.
         """
         allowed_updates = {}
 
-        # Simple field mappings
-        if "interests" in trip_updates:
-            allowed_updates["interests"] = trip_updates["interests"]
+        if trip_updates.interests is not None:
+            allowed_updates["interests"] = trip_updates.interests
 
-        if "pace" in trip_updates:
-            allowed_updates["pace"] = trip_updates["pace"]
+        if trip_updates.pace is not None:
+            allowed_updates["pace"] = trip_updates.pace
 
-        if "budget" in trip_updates:
-            allowed_updates["budget"] = trip_updates["budget"]
+        if trip_updates.budget is not None:
+            allowed_updates["budget"] = trip_updates.budget
 
-        # Additional preferences (merge with existing)
-        if "additional_preferences" in trip_updates:
-            allowed_updates["additional_preferences"] = trip_updates["additional_preferences"]
-
-        # Daily routine updates (if any)
-        if "daily_routine" in trip_updates:
-            allowed_updates["daily_routine"] = trip_updates["daily_routine"]
+        if trip_updates.additional_preferences is not None:
+            allowed_updates["additional_preferences"] = trip_updates.additional_preferences
+        
+        if trip_updates.structured_preferences is not None:
+            allowed_updates["structured_preferences"] = trip_updates.structured_preferences
 
         return TripUpdateRequest(**allowed_updates)
 
@@ -173,20 +180,33 @@ class TripChatAssistant:
         # 5. Apply trip updates if any
         updated_trip = current_trip
         if llm_response.trip_updates:
+            # Get the update object from the LLM response
+            updates = llm_response.trip_updates
+
             # Merge additional_preferences instead of replacing
-            if "additional_preferences" in llm_response.trip_updates:
+            if updates.additional_preferences:
                 merged_prefs = {
                     **current_trip.additional_preferences,
-                    **llm_response.trip_updates["additional_preferences"]
+                    **updates.additional_preferences,
                 }
-                llm_response.trip_updates["additional_preferences"] = merged_prefs
+                updates.additional_preferences = merged_prefs
 
-            update_request = self._safe_apply_trip_updates(llm_response.trip_updates)
-            updated_trip = await self.trip_spec_collector.update_trip(
-                trip_id, update_request, db
-            )
-            if not updated_trip:
-                raise ValueError(f"Failed to update trip {trip_id}")
+            # Merge structured_preferences instead of replacing
+            if updates.structured_preferences:
+                # Assuming current_trip has a structured_preferences attribute
+                # which we will add to the model
+                existing_structured_prefs = getattr(current_trip, 'structured_preferences', []) or []
+                merged_structured_prefs = existing_structured_prefs + updates.structured_preferences
+                updates.structured_preferences = merged_structured_prefs
+
+            update_request = self._safe_apply_trip_updates(updates)
+            
+            if update_request.model_dump(exclude_unset=True):
+                updated_trip = await self.trip_spec_collector.update_trip(
+                    trip_id, update_request, db
+                )
+                if not updated_trip:
+                    raise ValueError(f"Failed to update trip {trip_id}")
 
         # 6. Cache the response
         if use_cache and cache_key:

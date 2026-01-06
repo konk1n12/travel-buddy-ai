@@ -167,6 +167,83 @@ class POIPlanner:
 
         return adjusted_candidates
 
+    async def _validate_and_repair_day_plan(
+        self,
+        day_context: DayContext,
+        selected_by_block: dict[int, POICandidate],
+        day_block_candidates: dict[int, list[POICandidate]],
+        trip_selected_poi_ids: set[UUID],
+        day_anchor_lat: Optional[float],
+        day_anchor_lon: Optional[float],
+        preference_profile: POIPreferenceProfile,
+        day_skeleton: DaySkeleton,
+    ) -> dict[int, POICandidate]:
+        """Validate and repair a day's POI plan for geographic continuity."""
+        if not self._settings.enable_travel_hop_limit or self._settings.max_hop_distance_km <= 0:
+            return selected_by_block
+
+        max_hop_distance_km = self._settings.max_hop_distance_km
+        sorted_block_indices = sorted(selected_by_block.keys())
+        
+        prev_lat, prev_lon = day_anchor_lat, day_anchor_lon
+
+        for i, block_index in enumerate(sorted_block_indices):
+            current_poi = selected_by_block[block_index]
+
+            if current_poi.lat is None or current_poi.lon is None:
+                continue
+
+            if prev_lat is not None and prev_lon is not None:
+                distance = haversine_distance_km(prev_lat, prev_lon, current_poi.lat, current_poi.lon)
+                if distance > max_hop_distance_km:
+                    logger.warning(
+                        f"Long hop detected in POI plan for Day {day_context.day_number}, Block {block_index}: "
+                        f"{current_poi.name} is {distance:.2f}km from previous point (max: {max_hop_distance_km}km)."
+                    )
+                    
+                    # Attempt to find a replacement
+                    candidates = day_block_candidates.get(block_index, [])
+                    skeleton_block = day_skeleton.blocks[block_index]
+                    
+                    best_replacement = None
+                    best_score = -1
+
+                    for candidate in candidates:
+                        if candidate.poi_id == current_poi.poi_id or candidate.poi_id in trip_selected_poi_ids:
+                            continue
+                        
+                        if candidate.lat is not None and candidate.lon is not None:
+                            candidate_dist = haversine_distance_km(prev_lat, prev_lon, candidate.lat, candidate.lon)
+                            if candidate_dist <= max_hop_distance_km:
+                                score = score_candidate(
+                                    candidate=candidate,
+                                    block_type=skeleton_block.block_type,
+                                    desired_categories=skeleton_block.desired_categories,
+                                    profile=preference_profile,
+                                    anchor_lat=prev_lat,
+                                    anchor_lon=prev_lon,
+                                    distance_weight=self._settings.hotel_anchor_distance_weight * 2, # Higher penalty for distance
+                                )
+                                if score > best_score:
+                                    best_score = score
+                                    best_replacement = candidate
+
+                    if best_replacement:
+                        logger.info(f"Replacing {current_poi.name} with {best_replacement.name} to fix long hop.")
+                        
+                        # Update sets of used POI IDs
+                        trip_selected_poi_ids.discard(current_poi.poi_id)
+                        trip_selected_poi_ids.add(best_replacement.poi_id)
+
+                        selected_by_block[block_index] = best_replacement
+                        current_poi = best_replacement
+                    else:
+                        logger.warning(f"Could not find a suitable replacement for {current_poi.name}.")
+
+            prev_lat, prev_lon = current_poi.lat, current_poi.lon
+
+        return selected_by_block
+
     async def generate_poi_plan(
         self,
         trip_id: UUID,
@@ -404,6 +481,19 @@ class POIPlanner:
                     city_center_lon=trip_spec.city_center_lon,
                     preference_summary=preference_summary,
                 )
+
+                if selected_by_block:
+                    selected_by_block = await self._validate_and_repair_day_plan(
+                        day_context=day_context,
+                        selected_by_block=selected_by_block,
+                        day_block_candidates=day_block_candidates,
+                        trip_selected_poi_ids=trip_selected_poi_ids,
+                        day_anchor_lat=day_anchor_lat,
+                        day_anchor_lon=day_anchor_lon,
+                        preference_profile=preference_profile,
+                        day_skeleton=day,
+                    )
+
 
             for block_index, block in enumerate(day.blocks):
                 if not self._block_needs_pois(block.block_type):
