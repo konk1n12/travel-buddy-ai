@@ -190,13 +190,23 @@ async def fetch_place_details(place_id: str) -> PlaceDetails:
         ]),
     }
 
+    print(f"🌐 Google Place Details API: Fetching place_id={place_id}")
     async with httpx.AsyncClient(timeout=settings.google_places_timeout_seconds) as client:
-        response = await client.get(settings.google_place_details_base_url, params=params)
-        response.raise_for_status()
-        payload = response.json()
+        try:
+            response = await client.get(settings.google_place_details_base_url, params=params)
+            response.raise_for_status()
+            payload = response.json()
+            print(f"✅ Google Place Details API: Success for place_id={place_id}")
+        except httpx.HTTPStatusError as e:
+            print(f"❌ Google Place Details API: HTTP {e.response.status_code} for place_id={place_id}")
+            raise
+        except Exception as e:
+            print(f"❌ Google Place Details API: Failed for place_id={place_id} - {type(e).__name__}: {e}")
+            raise
 
     status = payload.get("status")
     if status != "OK":
+        print(f"❌ Google Place Details API: Status {status} for place_id={place_id}")
         raise RuntimeError(f"Google Places Details error: {status}")
 
     result: dict[str, Any] = payload.get("result", {})
@@ -251,7 +261,16 @@ async def fetch_place_photo(photo_reference: str, max_width: int = 1200) -> byte
         "key": settings.google_maps_api_key,
     }
 
+    print(f"🌐 Google Place Photo API: Fetching photo_reference={photo_reference[:20]}...")
     async with httpx.AsyncClient(timeout=settings.google_places_timeout_seconds) as client:
-        response = await client.get(settings.google_place_photo_base_url, params=params)
-        response.raise_for_status()
-        return response.content
+        try:
+            response = await client.get(settings.google_place_photo_base_url, params=params)
+            response.raise_for_status()
+            print(f"✅ Google Place Photo API: Success ({len(response.content)} bytes)")
+            return response.content
+        except httpx.HTTPStatusError as e:
+            print(f"❌ Google Place Photo API: HTTP {e.response.status_code}")
+            raise
+        except Exception as e:
+            print(f"❌ Google Place Photo API: Failed - {type(e).__name__}: {e}")
+            raise

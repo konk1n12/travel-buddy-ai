@@ -54,7 +54,21 @@
       "Bash(/usr/local/bin/docker compose ps)",
       "Bash(/usr/local/bin/docker compose logs:*)",
       "Bash(/usr/local/bin/docker exec:*)",
-      "Bash(/usr/local/bin/docker compose restart api)"
+      "Bash(/usr/local/bin/docker compose restart api)",
+      "Bash(swift -typecheck:*)",
+      "Bash(tee:*)",
+      "Bash(ls:*)",
+      "Bash(./test_plan_endpoint.sh:*)",
+      "Bash(./test_plan_final.sh:*)",
+      "Bash(bash:*)",
+      "Bash(/usr/local/bin/docker compose down)",
+      "Bash(/usr/local/bin/docker compose up -d)",
+      "Bash(find:*)",
+      "Bash(/usr/local/bin/docker compose down -v)",
+      "Bash(timeout 150 bash:*)",
+      "Bash(cd /Users/denosadchiy/Desktop/Travel\\\\ Buddy\\\\ Ai && git add:*)",
+      "Bash(git rm \"Снимок экрана 2026-01-04 в 00.27.40.png\")",
+      "Bash(git add .claude/settings.local.json)"
     ]
   }
 }

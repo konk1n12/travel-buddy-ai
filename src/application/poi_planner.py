@@ -752,6 +752,9 @@ Return ONLY JSON:
 Rules:
 - Use only provided candidate_id values.
 - Score higher when a place strongly matches preferences or must-include keywords.
+- If category preferences are provided (strongly prefer/avoid), apply them:
+  * Give high scores (80-100) to strongly preferred categories
+  * Give low scores (10-30) to categories marked for avoidance
 """
 
     PRIORITIZE_SYSTEM_PROMPT = """You are a POI curator. Identify must-visit and nice-to-have places.
@@ -764,6 +767,9 @@ Return ONLY JSON:
 Rules:
 - Use only provided candidate_id values.
 - must_visit_ids should be <= 10, nice_to_have_ids <= 20.
+- If category preferences are provided (strongly prefer/avoid), prioritize:
+  * Must-visit: POIs from strongly preferred categories
+  * Deprioritize: POIs from categories marked for avoidance
 """
 
     def __init__(
@@ -974,37 +980,35 @@ Suggest search directives for Google Places. Use only available categories.
         preference_profile: Optional["POIPreferenceProfile"] = None,
         deadline_ts: Optional[float] = None,
     ) -> dict[str, list[POICandidate]]:
+        """
+        Fetch POI candidates with mandatory Google Places quota:
+        - ALWAYS fetch minimum 50% of required POIs from Google Places
+        - Remaining can come from DB cache
+        - Retry with expanded limits if insufficient candidates
+        """
         if not directives:
             return {}
 
-        semaphore = asyncio.Semaphore(5)
+        semaphore = asyncio.Semaphore(10)  # Increased from 5 for parallel fetching
         max_per_category = self._settings.agentic_max_candidates_per_category
         from src.infrastructure.database import AsyncSessionLocal
-        from src.infrastructure.poi_providers import DBPOIProvider
+        from src.infrastructure.poi_providers import DBPOIProvider, get_poi_provider
 
-        categories = {d.category for d in directives}
         min_rating = self._settings.smart_routing_min_rating
         if preference_profile:
             min_rating = max(min_rating, preference_profile.min_rating)
 
-        db_provider = DBPOIProvider(db)
-        base_pools = await db_provider.search_pois_bulk(
-            city=trip_spec.city,
-            all_categories=categories,
-            budget=trip_spec.budget,
-            limit_per_category=max_per_category,
-            city_center_lat=trip_spec.city_center_lat,
-            city_center_lon=trip_spec.city_center_lon,
-            max_radius_km=50.0,
-            min_rating=min_rating,
-            include_tags=True,
-        )
+        # Calculate total required POIs across all categories
+        total_required = sum(d.min_count for d in directives)
+        min_external_required = int(total_required * 0.5)  # Minimum 50% from Google Places
 
-        async def fetch_one(directive: SearchDirective, limit_override: Optional[int] = None) -> tuple[str, list[POICandidate]]:
+        logger.info(f"🎯 POI fetch strategy: need {total_required} total, forcing {min_external_required} from Google Places (50%)")
+
+        async def fetch_external(directive: SearchDirective, limit: int) -> tuple[str, list[POICandidate]]:
+            """Fetch from Google Places via CompositePOIProvider"""
             async with semaphore:
                 async with AsyncSessionLocal() as session:
-                    provider = get_poi_provider(session)
-                    limit = limit_override or min(max(directive.min_count, 6), max_per_category)
+                    provider = get_poi_provider(session)  # Uses Composite = DB + Google Places
                     candidates = await provider.search_pois(
                         city=trip_spec.city,
                         desired_categories=[directive.category],
@@ -1017,65 +1021,74 @@ Suggest search directives for Google Places. Use only available categories.
                         search_keywords=directive.keywords or None,
                         fetch_details=False,
                     )
+                    logger.info(f"✅ Fetched {len(candidates)} candidates for {directive.category}")
                     return directive.category, candidates
 
-        missing = []
+        # Phase 1: FORCE fetch from Google Places for all categories (50% quota)
+        external_tasks = []
+
         for directive in directives:
-            existing = base_pools.get(directive.category, [])
-            needed = max(0, directive.min_count - len(existing))
-            if needed <= 0:
-                continue
-            priority_score = 2 if directive.priority == "must" else 1 if directive.priority == "high" else 0
-            missing.append((priority_score, needed, directive))
+            # Allocate proportional share of external quota to each category
+            category_share = int((directive.min_count / total_required) * min_external_required)
+            category_share = max(category_share, int(directive.min_count * 0.5))  # At least 50% of category requirement
+            category_share = min(category_share, max_per_category)
 
-        missing.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        max_external_categories = max(4, self._settings.agentic_llm_scoring_max_categories + 1)
-        missing = missing[:max_external_categories]
+            if category_share > 0:
+                external_tasks.append(fetch_external(directive, category_share))
 
-        results = []
-        if missing:
-            if deadline_ts is not None:
-                remaining = deadline_ts - time.monotonic()
-                if remaining <= 0:
-                    return base_pools
-                if remaining < 8:
-                    return base_pools
-            total_candidates = sum(len(pool) for pool in base_pools.values())
-            allow_normal = total_candidates < 40
-            budget_remaining = 12
-            if deadline_ts is not None:
-                remaining = deadline_ts - time.monotonic()
-                if remaining < 15:
-                    budget_remaining = min(budget_remaining, 6)
-            tasks = []
-            for _, needed, directive in missing:
-                if directive.priority == "normal" and not allow_normal:
-                    continue
-                if budget_remaining <= 0:
-                    break
-                limit = min(needed, budget_remaining, max_per_category)
-                tasks.append(fetch_one(directive, limit_override=limit))
-                budget_remaining -= limit
-            if tasks:
-                if deadline_ts is None:
-                    results = await asyncio.gather(*tasks)
-                else:
-                    remaining = max(1.0, deadline_ts - time.monotonic())
-                    try:
-                        results = await asyncio.wait_for(
-                            asyncio.gather(*tasks),
-                            timeout=remaining,
-                        )
-                    except Exception:
-                        results = []
+        # Execute external fetches in parallel
+        logger.info(f"🌐 Fetching {len(external_tasks)} categories from Google Places...")
+        if deadline_ts is None:
+            external_results = await asyncio.gather(*external_tasks, return_exceptions=True)
+        else:
+            remaining = max(10.0, deadline_ts - time.monotonic())
+            try:
+                external_results = await asyncio.wait_for(
+                    asyncio.gather(*external_tasks, return_exceptions=True),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("External POI fetch timed out")
+                external_results = []
 
+        # Collect results from external fetch
         by_category: dict[str, list[POICandidate]] = defaultdict(list)
-        for category, candidates in base_pools.items():
+        for result in external_results:
+            if isinstance(result, Exception):
+                logger.warning(f"External fetch error: {result}")
+                continue
+            category, candidates = result
             if candidates:
                 by_category[category].extend(candidates)
-        for category, candidates in results:
-            if candidates:
-                by_category[category].extend(candidates)
+
+        # Phase 2: Fill gaps with DB cache if needed
+        db_provider = DBPOIProvider(db)
+        categories = {d.category for d in directives}
+        db_pools = await db_provider.search_pois_bulk(
+            city=trip_spec.city,
+            all_categories=categories,
+            budget=trip_spec.budget,
+            limit_per_category=max_per_category,
+            city_center_lat=trip_spec.city_center_lat,
+            city_center_lon=trip_spec.city_center_lon,
+            max_radius_km=50.0,
+            min_rating=min_rating,
+            include_tags=True,
+        )
+
+        # Merge DB results (dedup by poi_id)
+        for category, db_candidates in db_pools.items():
+            existing_ids = {c.poi_id for c in by_category.get(category, [])}
+            for candidate in db_candidates:
+                if candidate.poi_id not in existing_ids:
+                    by_category[category].append(candidate)
+
+        # Log final counts
+        total_fetched = sum(len(candidates) for candidates in by_category.values())
+        logger.info(f"📊 Total POI candidates: {total_fetched} ({len(by_category)} categories)")
+        for category, candidates in by_category.items():
+            logger.info(f"  - {category}: {len(candidates)} POIs")
+
         return by_category
 
     async def _score_candidates_with_llm(
@@ -1148,8 +1161,18 @@ Suggest search directives for Google Places. Use only available categories.
                 "structured_preferences": [p.model_dump() for p in (trip_spec.structured_preferences or [])],
             }
 
+            # Include category preferences to guide scoring
+            category_guidance = ""
+            if preference_profile and preference_profile.category_boosts:
+                preferred = [cat for cat, boost in preference_profile.category_boosts.items() if boost > 5.0]
+                penalized = [cat for cat, boost in preference_profile.category_boosts.items() if boost < -3.0]
+                if preferred:
+                    category_guidance += f"\nStrongly prefer: {', '.join(preferred)}"
+                if penalized:
+                    category_guidance += f"\nAvoid/penalize: {', '.join(penalized)}"
+
             prompt = f"""Trip preferences:
-{preference_summary}
+{preference_summary}{category_guidance}
 
 Category: {category}
 
@@ -1232,8 +1255,18 @@ Candidates:
             "must_include_keywords": preference_profile.must_include_keywords if preference_profile else [],
         }
 
+        # Include category preferences to guide prioritization
+        category_guidance = ""
+        if preference_profile and preference_profile.category_boosts:
+            preferred = [cat for cat, boost in preference_profile.category_boosts.items() if boost > 5.0]
+            penalized = [cat for cat, boost in preference_profile.category_boosts.items() if boost < -3.0]
+            if preferred:
+                category_guidance += f"\nStrongly prefer: {', '.join(preferred)}"
+            if penalized:
+                category_guidance += f"\nAvoid/penalize: {', '.join(penalized)}"
+
         prompt = f"""Trip preferences:
-{preference_summary}
+{preference_summary}{category_guidance}
 
 Candidates:
 {payload}
@@ -1448,21 +1481,51 @@ Candidates:
                 )
         directives = self._merge_directives(base_directives, llm_directives)
 
-        candidates_by_category = await self._fetch_candidates(
-            directives,
-            trip_spec,
-            db,
-            preference_profile=preference_profile,
-            deadline_ts=deadline_ts,
-        )
+        # RETRY LOOP: Expand POI search until we have enough candidates
+        total_required = sum(d.min_count for d in directives)
+        max_retries = 3
+        multiplier = 1.0
 
-        # Deduplicate and keep best rank_score
-        deduped: dict[UUID, POICandidate] = {}
-        for candidates in candidates_by_category.values():
-            for candidate in candidates:
-                existing = deduped.get(candidate.poi_id)
-                if not existing or (candidate.rank_score or 0) > (existing.rank_score or 0):
-                    deduped[candidate.poi_id] = candidate
+        for retry in range(max_retries):
+            # Expand limits on each retry
+            if retry > 0:
+                multiplier *= 1.5  # 1.5x, 2.25x, 3.375x
+                logger.info(f"🔄 Retry {retry}/{max_retries}: expanding POI search by {multiplier:.1f}x")
+
+                # Increase min_count for all directives
+                for directive in directives:
+                    original_min = int(directive.min_count / (multiplier / (1.5 ** retry)))  # Restore original
+                    directive.min_count = int(original_min * multiplier)
+
+            candidates_by_category = await self._fetch_candidates(
+                directives,
+                trip_spec,
+                db,
+                preference_profile=preference_profile,
+                deadline_ts=deadline_ts,
+            )
+
+            # Deduplicate and keep best rank_score
+            deduped: dict[UUID, POICandidate] = {}
+            for candidates in candidates_by_category.values():
+                for candidate in candidates:
+                    existing = deduped.get(candidate.poi_id)
+                    if not existing or (candidate.rank_score or 0) > (existing.rank_score or 0):
+                        deduped[candidate.poi_id] = candidate
+
+            unique_count = len(deduped)
+            logger.info(f"📊 Attempt {retry + 1}: {unique_count} unique POIs (need {total_required})")
+
+            # Success condition: have at least required POIs
+            if unique_count >= total_required:
+                logger.info(f"✅ Sufficient POIs obtained: {unique_count}/{total_required}")
+                break
+
+            # If this is not the last retry, continue expanding
+            if retry < max_retries - 1:
+                logger.warning(f"⚠️ Insufficient POIs ({unique_count}/{total_required}), expanding search...")
+            else:
+                logger.warning(f"⚠️ Max retries reached. Proceeding with {unique_count} POIs (target: {total_required})")
 
         candidates = list(deduped.values())
         llm_scores = await self._score_candidates_with_llm(

@@ -560,28 +560,41 @@ You must include every block exactly once and return only JSON."""
         selected_by_block: dict[int, POICandidate],
         candidates_by_block: dict[int, list[POICandidate]],
         used_poi_ids: set[UUID],
+        used_poi_names: set[str],
     ) -> dict[int, POICandidate]:
-        """Ensure unique POIs within a day; prefer next-best replacements."""
+        """Ensure unique POIs (by ID and name) within a day AND across the entire trip."""
         deduped: dict[int, POICandidate] = {}
-        seen: set[UUID] = set()
+        seen_ids: set[UUID] = set()
+        seen_names: set[str] = set()
 
         for block_index in sorted(candidates_by_block.keys()):
             candidate = selected_by_block.get(block_index)
-            if candidate and candidate.poi_id not in seen and candidate.poi_id not in used_poi_ids:
+            # STRICT: Check both within-day and trip-wide uniqueness (by ID and name)
+            if (candidate and
+                candidate.poi_id not in seen_ids and
+                candidate.poi_id not in used_poi_ids and
+                candidate.name not in seen_names and
+                candidate.name not in used_poi_names):
                 deduped[block_index] = candidate
-                seen.add(candidate.poi_id)
+                seen_ids.add(candidate.poi_id)
+                seen_names.add(candidate.name)
                 continue
 
+            # Find unused replacement (strict - no reuse by ID or name across trip)
             replacement = None
             for alt in candidates_by_block.get(block_index, []):
-                if alt.poi_id in seen or alt.poi_id in used_poi_ids:
+                if (alt.poi_id in seen_ids or
+                    alt.poi_id in used_poi_ids or
+                    alt.name in seen_names or
+                    alt.name in used_poi_names):
                     continue
                 replacement = alt
                 break
 
             if replacement:
                 deduped[block_index] = replacement
-                seen.add(replacement.poi_id)
+                seen_ids.add(replacement.poi_id)
+                seen_names.add(replacement.name)
 
         return deduped
 
@@ -1158,14 +1171,20 @@ Return JSON only:
         curated_bank,
         district_id: Optional[str],
     ) -> list[POICandidate]:
+        initial_count = len(curated_bank.candidates)
         candidates = curated_bank.candidates
+        used_district_filter = False
+
         if district_id and curated_bank.clustering_result:
             district = curated_bank.clustering_result.get_district(district_id)
             if district:
                 candidates = district.pois
+                used_district_filter = True
+                logger.debug(f"District filter: {initial_count} → {len(candidates)} candidates")
 
         desired = set([c.lower() for c in (skeleton_block.desired_categories or [])])
         if desired:
+            before_category_filter = len(candidates)
             filtered = []
             for candidate in candidates:
                 category = (candidate.category or "").lower()
@@ -1175,6 +1194,32 @@ Return JSON only:
                 if candidate.tags and any(tag.lower() in desired for tag in candidate.tags):
                     filtered.append(candidate)
             candidates = filtered
+            logger.debug(
+                f"Category filter ({desired}): {before_category_filter} → {len(candidates)} candidates "
+                f"(block_type={skeleton_block.block_type})"
+            )
+
+        # CRITICAL FALLBACK: If filtering left too few candidates, expand search
+        # Lowered threshold from 3 to 10 to ensure sufficient variety
+        min_candidates_threshold = 10
+        if len(candidates) < min_candidates_threshold:
+            logger.warning(
+                f"⚠️ Only {len(candidates)} candidates after filtering (need {min_candidates_threshold}), "
+                f"expanding search for {skeleton_block.block_type}"
+            )
+            candidates = curated_bank.candidates
+            # Reapply category filter if needed
+            if desired:
+                filtered = []
+                for candidate in candidates:
+                    category = (candidate.category or "").lower()
+                    if category in desired:
+                        filtered.append(candidate)
+                        continue
+                    if candidate.tags and any(tag.lower() in desired for tag in candidate.tags):
+                        filtered.append(candidate)
+                candidates = filtered
+                logger.info(f"✅ After city-wide expansion: {len(candidates)} candidates")
 
         return candidates
 
@@ -1188,6 +1233,7 @@ Return JSON only:
         district_plan,
         must_include_assignments: dict[tuple[int, int], POICandidate],
         used_poi_ids: set[UUID],
+        used_poi_names: set[str],
         enable_llm: bool = True,
         deadline_ts: Optional[float] = None,
     ) -> tuple[
@@ -1260,9 +1306,26 @@ Return JSON only:
                 anchor_lat=anchor_lat,
                 anchor_lon=anchor_lon,
             )
-            ranked = [c for c in ranked if c.poi_id not in used_poi_ids]
+            # STRICT: Only allow unused POIs (by ID and name) - NO FALLBACK TO DUPLICATES
+            before_filter = len(ranked)
+            ranked = [c for c in ranked if c.poi_id not in used_poi_ids and c.name not in used_poi_names]
+            after_filter = len(ranked)
+            if before_filter != after_filter:
+                filtered_out = [c for c in candidates if c.poi_id in used_poi_ids or c.name in used_poi_names]
+                logger.warning(
+                    f"🚫 Day {day_skeleton.day_number}, Block {block_index}: "
+                    f"Filtered out {before_filter - after_filter} duplicate POIs: "
+                    f"{[c.name for c in filtered_out[:5]]}"
+                )
             if not ranked:
-                ranked = candidates[:max(5, self._settings.agentic_day_selection_max_candidates)]
+                logger.warning(
+                    f"❌ Day {day_skeleton.day_number}, Block {block_index}: "
+                    f"No unused POI candidates available! Total used IDs: {len(used_poi_ids)}, "
+                    f"Total used names: {len(used_poi_names)}, "
+                    f"Total candidates before filtering: {len(candidates)}"
+                )
+                # DO NOT use duplicates - leave block empty if no unique POIs available
+                continue
             candidates_by_block[block_index] = ranked[:max(5, self._settings.agentic_day_selection_max_candidates)]
             block_contexts[block_index] = BlockContext(
                 block_index=block_index,
@@ -1327,6 +1390,7 @@ Return JSON only:
                 selected_by_block=selected_by_block,
                 candidates_by_block=candidates_by_block,
                 used_poi_ids=used_poi_ids,
+                used_poi_names=used_poi_names,
             )
 
         return selected_by_block, candidates_by_block, llm_failed, llm_requests
@@ -1577,6 +1641,8 @@ Return JSON only:
         """
         Generate itinerary using agentic POI Curator + Route Engineer pipeline.
         """
+        logger.warning(f"🚀🚀🚀 generate_agentic_itinerary STARTED for trip {trip_id}")
+
         # 1. Load trip spec
         trip_spec = await self.trip_spec_collector.get_trip(trip_id, db)
         if not trip_spec:
@@ -1689,13 +1755,17 @@ Return JSON only:
         itinerary_days = []
         poi_plan_blocks = []
         trip_used_poi_ids: set[UUID] = set()
+        trip_used_poi_names: set[str] = set()  # Track names to avoid duplicate businesses/chains
         previous_day_last_poi: Optional[POICandidate] = None
         day_llm_enabled = (
             self._settings.enable_day_level_poi_selection
             and self._settings.agentic_use_day_level_poi_selection
         )
 
+        logger.warning(f"🔄🔄🔄 Starting day-by-day POI selection loop for {len(macro_plan.days)} days")
+
         for day_skeleton in macro_plan.days:
+            logger.warning(f"📅 Processing Day {day_skeleton.day_number}, current used POIs: {len(trip_used_poi_ids)} IDs, {len(trip_used_poi_names)} names")
             district_plan = day_district_plans.get(day_skeleton.day_number)
 
             if deadline_ts is not None and day_llm_enabled:
@@ -1712,15 +1782,31 @@ Return JSON only:
                 district_plan=district_plan,
                 must_include_assignments=must_include_assignments,
                 used_poi_ids=trip_used_poi_ids,
+                used_poi_names=trip_used_poi_names,
                 enable_llm=day_llm_enabled,
                 deadline_ts=deadline_ts,
             )
             if llm_failed:
                 day_llm_enabled = False
 
+            logger.warning(
+                f"🔍 Day {day_skeleton.day_number} FIRST selection: "
+                f"{len(selected_by_block)} POIs selected: "
+                f"{[poi.name for poi in selected_by_block.values()]}"
+            )
+
             if llm_requests and deadline_ts is not None:
                 remaining = deadline_ts - time.monotonic()
                 if remaining > 10:
+                    # CRITICAL: Add POIs from first selection to used sets BEFORE retry
+                    # to prevent selecting them again in different blocks
+                    first_selection_ids = {poi.poi_id for poi in selected_by_block.values()}
+                    first_selection_names = {poi.name for poi in selected_by_block.values()}
+                    logger.warning(
+                        f"🔄 Day {day_skeleton.day_number} expanding candidates, "
+                        f"protecting {len(first_selection_ids)} POIs from first selection"
+                    )
+
                     curated_bank = await curator.expand_candidates(
                         requests=llm_requests,
                         trip_spec=trip_spec,
@@ -1729,6 +1815,10 @@ Return JSON only:
                         preference_profile=preference_profile,
                         deadline_ts=deadline_ts,
                     )
+
+                    # Pass updated used sets that include first selection
+                    temp_used_poi_ids = trip_used_poi_ids | first_selection_ids
+                    temp_used_poi_names = trip_used_poi_names | first_selection_names
                     selected_by_block, candidates_by_block, _, _ = await self._select_pois_for_day_agentic(
                         day_skeleton=day_skeleton,
                         trip_spec=trip_spec,
@@ -1737,13 +1827,22 @@ Return JSON only:
                         preference_summary=preference_summary,
                         district_plan=district_plan,
                         must_include_assignments=must_include_assignments,
-                        used_poi_ids=trip_used_poi_ids,
+                        used_poi_ids=temp_used_poi_ids,  # Use temp set with first selection
+                        used_poi_names=temp_used_poi_names,  # Use temp set with first selection
                         enable_llm=day_llm_enabled,
                         deadline_ts=deadline_ts,
                     )
 
+                    logger.warning(
+                        f"🔍 Day {day_skeleton.day_number} SECOND selection (after expansion): "
+                        f"{len(selected_by_block)} POIs selected: "
+                        f"{[poi.name for poi in selected_by_block.values()]}"
+                    )
+
             for poi in selected_by_block.values():
+                logger.warning(f"➕ Adding to trip_used: {poi.name} (ID: {poi.poi_id})")
                 trip_used_poi_ids.add(poi.poi_id)
+                trip_used_poi_names.add(poi.name)
 
             # Build POI plan blocks (store top candidates per block)
             for block_index, block in enumerate(day_skeleton.blocks):
@@ -2013,7 +2112,9 @@ Return JSON only:
                     preference_profile=preference_profile,
                 )
             except Exception as fallback_error:
+                import traceback
                 logger.warning(
                     f"Smart optimizer failed for trip {trip_id}, falling back to classic: {fallback_error}"
                 )
+                logger.error(f"Full traceback:\n{traceback.format_exc()}")
                 return await self.generate_itinerary(trip_id, db)

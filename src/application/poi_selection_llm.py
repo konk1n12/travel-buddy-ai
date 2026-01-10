@@ -12,6 +12,7 @@ CRITICAL SAFETY INVARIANT:
 """
 import json
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from typing import Optional
 from uuid import UUID
@@ -103,7 +104,11 @@ CRITICAL RULES:
 3. You MUST NOT repeat the same candidate across blocks.
 4. You MUST NOT invent places or IDs.
 5. Prefer candidates that keep consecutive blocks close (avoid long hops).
-6. Return ONLY valid JSON matching the schema. No extra text.
+6. CATEGORY BOOSTS: Apply category preferences from Preference Signals:
+   - Positive boosts (+5.0 to +10.0): STRONGLY PREFER these categories
+   - Negative boosts (-3.0 to -10.0): AVOID or DEPRIORITIZE these categories
+   - When a category has strong negative boost, only select it if NO better alternatives exist
+7. Return ONLY valid JSON matching the schema. No extra text.
 """
 
     DAY_LEVEL_SYSTEM_PROMPT_WITH_REQUESTS = """You are a route-aware POI selector for a single day.
@@ -114,8 +119,12 @@ CRITICAL RULES:
 3. You MUST NOT repeat the same candidate across blocks.
 4. You MUST NOT invent places or IDs.
 5. Prefer candidates that keep consecutive blocks close (avoid long hops).
-6. If key preferences cannot be satisfied with the given candidates, request more candidates.
-7. Return ONLY valid JSON matching the schema. No extra text.
+6. CATEGORY BOOSTS: Apply category preferences from Preference Signals:
+   - Positive boosts (+5.0 to +10.0): STRONGLY PREFER these categories
+   - Negative boosts (-3.0 to -10.0): AVOID or DEPRIORITIZE these categories
+   - When a category has strong negative boost, only select it if NO better alternatives exist
+7. If key preferences cannot be satisfied with the given candidates, request more candidates.
+8. Return ONLY valid JSON matching the schema. No extra text.
 """
 
     DAY_LEVEL_MAX_CANDIDATES_PER_BLOCK = 8
@@ -650,8 +659,16 @@ Respond with JSON only."""
         try:
             logger.info(
                 f"Calling LLM for day-level POI selection: day={day_context.day_number}, "
-                f"blocks={len(blocks)}"
+                f"blocks={len(blocks)}, theme={day_context.theme}"
             )
+
+            # DEBUG: Log candidates to understand why museums are selected for architecture day
+            for block in blocks:
+                candidates = candidates_by_block.get(block.block_index, [])[:8]
+                if candidates:
+                    cats = Counter(c.category for c in candidates)
+                    logger.info(f"🔍 Day {day_context.day_number} Block {block.block_index} ({block.block_type.value}, theme: '{block.theme}'): candidates={dict(cats)}")
+
             llm_response = await self.llm_client.generate_structured(
                 prompt=prompt,
                 system_prompt=self.DAY_LEVEL_SYSTEM_PROMPT,

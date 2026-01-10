@@ -35,6 +35,37 @@ LLM_TIMEOUT_SECONDS = 20
 # Maximum tokens for draft (reduced for speed)
 DRAFT_MAX_TOKENS = 1024
 
+# Total deadline for POI fetching (seconds)
+# iOS fast-draft timeout is 90s, LLM takes up to 20s, leave buffer for response
+POI_FETCH_DEADLINE_SECONDS = 55
+
+# Concurrency for external API calls (Google Places)
+# Higher = faster but more API pressure; 8 is safe for Google's rate limits
+POI_FETCH_CONCURRENCY = 8
+
+# POIs per category from external API (reduced for speed)
+# We only need 1 POI per block, 6 candidates is sufficient with deduplication
+EXTERNAL_POI_LIMIT_PER_CATEGORY = 6
+
+# =============================================================================
+# Hybrid Fetch Strategy: DB + Google for personalization and DB enrichment
+# =============================================================================
+
+# Minimum ratio of categories to fetch from Google (even if DB has results)
+# 0.5 = at least 50% of categories will query Google for fresh/personalized results
+GOOGLE_FETCH_MIN_RATIO = 0.5
+
+# Categories that ALWAYS go to Google (high personalization value)
+# These benefit most from fresh, personalized results based on user taste
+ALWAYS_FETCH_FROM_GOOGLE_CATEGORIES = {
+    "restaurant", "cafe", "bar",       # Meals vary by taste
+    "nightlife",                        # User preferences matter a lot
+    "shopping",                         # Personal taste
+}
+
+# Boost for POIs matching user interests/keywords (applied to rank_score)
+PERSONALIZATION_BOOST = 5.0
+
 # Block types that need POI candidates
 BLOCK_TYPES_NEEDING_POIS = {
     BlockType.MEAL,
@@ -298,6 +329,54 @@ Generate JSON skeleton with desired_categories for each block."""
         except (ValueError, IndexError):
             return time(9, 0)
 
+    def _get_primary_activity_categories(self, interests: list[str]) -> dict:
+        """
+        Generate personalized activity categories based on trip interests.
+        Returns dict with 'morning', 'afternoon', 'evening' category lists.
+        """
+        interests_lower = [i.lower() for i in (interests or [])]
+        interests_text = ' '.join(interests_lower)
+
+        # Default categories (used if no specific interests match)
+        morning_cats = ["attraction", "museum", "landmark"]
+        afternoon_cats = ["attraction", "culture", "shopping"]
+        evening_cats = ["park", "viewpoint", "attraction"]
+
+        # Personalize based on interests
+        # Museums interest → prioritize museum
+        if any(kw in interests_text for kw in ['museum', 'art', 'history']):
+            morning_cats = ["museum", "art_gallery", "attraction"]
+            afternoon_cats = ["museum", "attraction", "culture"]
+
+        # Architecture/views → NEVER include museum, prioritize landmarks
+        elif any(kw in interests_text for kw in ['architecture', 'view', 'landmark']):
+            morning_cats = ["attraction", "landmark", "viewpoint"]
+            afternoon_cats = ["attraction", "landmark", "park"]
+            evening_cats = ["viewpoint", "park", "attraction"]
+
+        # Gastronomy → focus on food experiences
+        if 'gastronomy' in interests_text or 'food' in interests_text:
+            # Don't override morning, but adjust afternoon
+            if 'museum' not in interests_text and 'art' not in interests_text:
+                afternoon_cats = ["restaurant", "cafe", "market"]
+
+        # Shopping → include shopping in afternoon
+        if 'shopping' in interests_text:
+            afternoon_cats = ["shopping", "market", "boutique"]
+
+        # Nature → prioritize parks
+        if 'nature' in interests_text or 'park' in interests_text:
+            morning_cats = ["park", "garden", "nature"]
+            afternoon_cats = ["park", "nature", "attraction"]
+
+        # Nightlife → handled separately in template
+
+        return {
+            'morning': morning_cats,
+            'afternoon': afternoon_cats,
+            'evening': evening_cats
+        }
+
     def _generate_from_template(self, trip_spec) -> list[DaySkeleton]:
         """
         Generate skeleton from template (instant, no LLM).
@@ -325,6 +404,9 @@ Generate JSON skeleton with desired_categories for each block."""
         # Day themes based on interests
         themes = self._generate_day_themes(trip_spec.interests, num_days)
 
+        # Get personalized activity categories
+        activity_cats = self._get_primary_activity_categories(trip_spec.interests)
+
         for day_num in range(1, num_days + 1):
             current_date = trip_spec.start_date + timedelta(days=day_num - 1)
             blocks = []
@@ -338,13 +420,13 @@ Generate JSON skeleton with desired_categories for each block."""
                 desired_categories=["cafe", "breakfast", "bakery"],
             ))
 
-            # Morning activity
+            # Morning activity - PERSONALIZED
             blocks.append(SkeletonBlock(
                 block_type=BlockType.ACTIVITY,
                 start_time=time(10, 0),
                 end_time=time(12, 30),
                 theme="Morning exploration",
-                desired_categories=["attraction", "museum", "landmark"],
+                desired_categories=activity_cats['morning'],
             ))
 
             # Lunch
@@ -356,14 +438,14 @@ Generate JSON skeleton with desired_categories for each block."""
                 desired_categories=["restaurant", "local cuisine", "cafe"],
             ))
 
-            # Afternoon activities
+            # Afternoon activities - PERSONALIZED
             if activities_per_day >= 2:
                 blocks.append(SkeletonBlock(
                     block_type=BlockType.ACTIVITY,
                     start_time=time(14, 30),
                     end_time=time(17, 0),
                     theme="Afternoon exploration",
-                    desired_categories=["attraction", "culture", "shopping"],
+                    desired_categories=activity_cats['afternoon'],
                 ))
 
             if activities_per_day >= 3:
@@ -372,7 +454,7 @@ Generate JSON skeleton with desired_categories for each block."""
                     start_time=time(17, 30),
                     end_time=time(19, 0),
                     theme="Evening stroll",
-                    desired_categories=["park", "viewpoint", "attraction"],
+                    desired_categories=activity_cats['evening'],
                 ))
 
             # Dinner
@@ -597,6 +679,92 @@ Generate JSON skeleton with desired_categories for each block."""
             return BlockType.NIGHTLIFE
         return BlockType.ACTIVITY
 
+    def _build_personalized_keywords(self, trip_spec, category: str) -> list[str]:
+        """
+        Build personalized search keywords based on user preferences.
+
+        Uses:
+        - trip_spec.interests: e.g., ["gastronomy", "nightlife", "modern art"]
+        - trip_spec.additional_preferences: e.g., {"dietary": "vegetarian", "music": "techno"}
+        - trip_spec.structured_preferences: e.g., [{"keyword": "georgian", "category": "restaurant"}]
+        - trip_spec.budget: affects price-related keywords
+
+        Returns list of keywords to enhance Google Places search queries.
+        """
+        keywords = []
+        category_lower = category.lower()
+
+        # Extract from interests
+        interests = getattr(trip_spec, 'interests', []) or []
+        for interest in interests:
+            interest_lower = interest.lower()
+            # Map interests to search keywords
+            if category_lower in ("restaurant", "cafe", "bar"):
+                if "gastronomy" in interest_lower or "food" in interest_lower:
+                    keywords.append("local cuisine")
+                if "кофейни" in interest_lower or "cafe" in interest_lower or "dessert" in interest_lower:
+                    keywords.append("specialty coffee")
+            elif category_lower == "nightlife":
+                if "ночная" in interest_lower or "nightlife" in interest_lower:
+                    keywords.append("popular nightclub")
+            elif category_lower == "museum":
+                if "современное искусство" in interest_lower or "modern art" in interest_lower:
+                    keywords.append("contemporary art")
+                if "истори" in interest_lower or "history" in interest_lower:
+                    keywords.append("historical")
+
+        # Extract from additional_preferences
+        additional = getattr(trip_spec, 'additional_preferences', {}) or {}
+        if isinstance(additional, dict):
+            # Dietary preferences
+            dietary = additional.get("dietary") or additional.get("diet")
+            if dietary:
+                if isinstance(dietary, list):
+                    keywords.extend(dietary[:2])  # Max 2 dietary keywords
+                else:
+                    keywords.append(str(dietary))
+
+            # Music preferences (for nightlife)
+            if category_lower == "nightlife":
+                music = additional.get("music") or additional.get("music_preference")
+                if music:
+                    keywords.append(str(music))
+
+            # Avoid preferences (negate)
+            avoid = additional.get("avoid", [])
+            if isinstance(avoid, list) and category_lower not in avoid:
+                pass  # Don't add negative keywords to search
+
+        # Extract from structured_preferences
+        structured = getattr(trip_spec, 'structured_preferences', []) or []
+        for pref in structured:
+            if hasattr(pref, 'category') and hasattr(pref, 'keyword'):
+                pref_category = (pref.category or "").lower()
+                if pref_category == category_lower or not pref_category:
+                    keyword = pref.keyword
+                    if keyword and keyword not in keywords:
+                        keywords.append(keyword)
+
+        # Budget-based keywords
+        budget = getattr(trip_spec, 'budget', None)
+        if budget:
+            budget_str = str(budget.value if hasattr(budget, 'value') else budget).lower()
+            if budget_str == "high" and category_lower in ("restaurant", "bar"):
+                keywords.append("upscale")
+            elif budget_str == "low" and category_lower in ("restaurant", "cafe"):
+                keywords.append("budget-friendly")
+
+        # Deduplicate and limit
+        seen = set()
+        unique_keywords = []
+        for kw in keywords:
+            kw_lower = kw.lower()
+            if kw_lower not in seen:
+                seen.add(kw_lower)
+                unique_keywords.append(kw)
+
+        return unique_keywords[:3]  # Max 3 keywords per category
+
     async def _fetch_category_pool(
         self,
         category: str,
@@ -608,8 +776,18 @@ Generate JSON skeleton with desired_categories for each block."""
         min_rating: float,
         limit: int,
         poi_provider: Optional["POIProvider"] = None,
+        fetch_details: bool = False,
+        search_keywords: Optional[list[str]] = None,
     ) -> list[POICandidate]:
-        """Fetch a POI pool for a category using the composite provider."""
+        """
+        Fetch a POI pool for a category using the composite provider.
+
+        Args:
+            fetch_details: If False, skip Google Place Details API calls (fast mode).
+                          This significantly reduces latency for new cities.
+            search_keywords: Personalized keywords to enhance Google search queries.
+                            E.g., ["vegetarian", "local cuisine"] for restaurants.
+        """
         provider = poi_provider
         if provider is None:
             if not self.poi_provider:
@@ -628,6 +806,8 @@ Generate JSON skeleton with desired_categories for each block."""
             city_center_lon=city_center_lon,
             max_radius_km=max_radius_km,
             block_type=block_type,
+            fetch_details=fetch_details,
+            search_keywords=search_keywords,
         )
 
         if not candidates:
@@ -650,22 +830,32 @@ Generate JSON skeleton with desired_categories for each block."""
         city_center_lon: Optional[float] = None,
     ) -> dict:
         """
-        Fetch POI pools for all categories in a SINGLE DB query.
+        Hybrid POI fetching: DB baseline + Google for personalization and DB enrichment.
 
         Strategy:
-        - Geocode city to get center coordinates for distance validation
-        - Fetch ALL categories in one bulk query (optimized vs sequential)
-        - Filter by rating >= 4.5 for high quality
-        - Validate distance from city center (prevents wrong-city POIs)
-        - Return dict: category -> list[POICandidate]
+        1. Geocode city to get center coordinates
+        2. Fetch ALL categories from DB in one bulk query (fast baseline)
+        3. ALWAYS fetch from Google for:
+           - Categories in ALWAYS_FETCH_FROM_GOOGLE_CATEGORIES (high personalization value)
+           - At least GOOGLE_FETCH_MIN_RATIO (50%) of remaining categories
+           - All missing categories (no DB results)
+        4. Use personalized search keywords based on user preferences
+        5. Merge DB + Google results, boosting personalized matches
 
-        Performance: ~2-5 seconds for 10-15 categories (single bulk query)
+        This ensures:
+        - Personalized results based on user interests
+        - Continuous DB enrichment with new POIs
+        - Fast response (DB provides baseline)
         """
-        from src.infrastructure.poi_providers import DBPOIProvider
+        import random
+        import time as time_module
+        from src.infrastructure.poi_providers import DBPOIProvider, GooglePlacesPOIProvider
+        from src.infrastructure.database import AsyncSessionLocal
 
-        max_radius_km = 50.0  # 50km from city center
+        max_radius_km = 50.0
         normalized_categories, category_aliases = self._normalize_categories(categories)
 
+        # Geocode city
         if city_center_lat is None or city_center_lon is None:
             geocoding_service = get_geocoding_service()
             geocoding_result = await geocoding_service.geocode_city(city)
@@ -674,19 +864,19 @@ Generate JSON skeleton with desired_categories for each block."""
                 city_center_lon = geocoding_result.lon
         if city_center_lat is not None and city_center_lon is not None:
             print(f"  📍 City center: {city} ({city_center_lat:.4f}, {city_center_lon:.4f})")
-            print(f"  🔍 Distance validation: POIs must be within {max_radius_km}km from city center")
         else:
             print(f"  ⚠️ Could not geocode '{city}', distance validation disabled")
 
-        # Use bulk fetch - single DB query for ALL categories
-        print(f"  Fetching POIs for {len(normalized_categories)} categories (bulk query)...")
-
+        # =========================================================================
+        # STEP 1: Fast DB bulk query (baseline)
+        # =========================================================================
+        print(f"  📚 DB fetch: {len(normalized_categories)} categories...")
         db_provider = DBPOIProvider(db)
-        base_pools = await db_provider.search_pois_bulk(
+        db_pools = await db_provider.search_pois_bulk(
             city=city,
             all_categories=normalized_categories,
             budget=budget,
-            limit_per_category=20,
+            limit_per_category=15,  # Reduced since we're also fetching from Google
             city_center_lat=city_center_lat,
             city_center_lon=city_center_lon,
             max_radius_km=max_radius_km,
@@ -694,53 +884,188 @@ Generate JSON skeleton with desired_categories for each block."""
             include_tags=False,
         )
 
-        # Fill missing categories via composite provider (DB + external)
-        missing_categories = [
-            category for category in normalized_categories
-            if not base_pools.get(category)
-        ]
-        if missing_categories:
-            from src.infrastructure.database import AsyncSessionLocal
+        db_total = sum(len(pois) for pois in db_pools.values())
+        print(f"  📚 DB returned {db_total} POIs")
 
-            semaphore = asyncio.Semaphore(5)
+        # =========================================================================
+        # STEP 2: Determine which categories to fetch from Google
+        # =========================================================================
+        categories_to_fetch_from_google = set()
 
-            async def fetch_one(category: str) -> tuple[str, list[POICandidate]]:
+        # 2a. Missing categories (no DB results) - always fetch
+        missing_categories = {
+            cat for cat in normalized_categories
+            if not db_pools.get(cat)
+        }
+        categories_to_fetch_from_google.update(missing_categories)
+
+        # 2b. High-personalization categories - always fetch from Google
+        always_fetch = normalized_categories & ALWAYS_FETCH_FROM_GOOGLE_CATEGORIES
+        categories_to_fetch_from_google.update(always_fetch)
+
+        # 2c. Ensure at least GOOGLE_FETCH_MIN_RATIO of categories go to Google
+        remaining = normalized_categories - categories_to_fetch_from_google
+        min_google_count = int(len(normalized_categories) * GOOGLE_FETCH_MIN_RATIO)
+        additional_needed = max(0, min_google_count - len(categories_to_fetch_from_google))
+        if additional_needed > 0 and remaining:
+            # Randomly select additional categories for diversity
+            additional = random.sample(list(remaining), min(additional_needed, len(remaining)))
+            categories_to_fetch_from_google.update(additional)
+
+        print(f"  🌐 Google fetch: {len(categories_to_fetch_from_google)}/{len(normalized_categories)} categories")
+        print(f"     - Missing from DB: {len(missing_categories)}")
+        print(f"     - High-personalization: {len(always_fetch)}")
+        print(f"     - Additional for {GOOGLE_FETCH_MIN_RATIO*100:.0f}% ratio: {additional_needed}")
+
+        # =========================================================================
+        # STEP 3: Fetch from Google with personalized keywords
+        # =========================================================================
+        google_pools: dict[str, list[POICandidate]] = {}
+
+        if categories_to_fetch_from_google:
+            fetch_start = time_module.time()
+            semaphore = asyncio.Semaphore(POI_FETCH_CONCURRENCY)
+
+            async def fetch_from_google(category: str) -> tuple[str, list[POICandidate]]:
+                elapsed = time_module.time() - fetch_start
+                if elapsed > POI_FETCH_DEADLINE_SECONDS:
+                    print(f"  ⏱️ Deadline exceeded, skipping {category}")
+                    return category, []
+
+                # Build personalized keywords for this category
+                keywords = self._build_personalized_keywords(trip_spec, category)
+
                 async with semaphore:
-                    async with AsyncSessionLocal() as session:
-                        provider = get_poi_provider(session)
-                        candidates = await self._fetch_category_pool(
-                            category=category,
-                            trip_spec=trip_spec,
-                            db=session,
-                            city_center_lat=city_center_lat,
-                            city_center_lon=city_center_lon,
-                            max_radius_km=max_radius_km,
-                            min_rating=4.0,
-                            limit=12,
-                            poi_provider=provider,
-                        )
-                        return category, candidates
+                    try:
+                        async with AsyncSessionLocal() as session:
+                            provider = get_poi_provider(session)
+                            candidates = await self._fetch_category_pool(
+                                category=category,
+                                trip_spec=trip_spec,
+                                db=session,
+                                city_center_lat=city_center_lat,
+                                city_center_lon=city_center_lon,
+                                max_radius_km=max_radius_km,
+                                min_rating=4.0,  # Lower threshold for Google (more variety)
+                                limit=EXTERNAL_POI_LIMIT_PER_CATEGORY,
+                                poi_provider=provider,
+                                fetch_details=False,
+                                search_keywords=keywords if keywords else None,
+                            )
+                            if keywords and candidates:
+                                print(f"     🔍 {category} + keywords {keywords}: {len(candidates)} POIs")
+                            return category, candidates
+                    except Exception as e:
+                        print(f"  ⚠️ Failed to fetch {category}: {e}")
+                        return category, []
 
-            results = await asyncio.gather(*[fetch_one(cat) for cat in missing_categories])
-            for category, candidates in results:
-                if candidates:
-                    base_pools[category] = candidates
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*[fetch_from_google(cat) for cat in categories_to_fetch_from_google]),
+                    timeout=POI_FETCH_DEADLINE_SECONDS
+                )
+                for category, candidates in results:
+                    if candidates:
+                        google_pools[category] = candidates
+            except asyncio.TimeoutError:
+                print(f"  ⏱️ Google fetch timeout after {POI_FETCH_DEADLINE_SECONDS}s, using partial results")
 
-        # Expand pools to original aliases so selection can use original categories
+            fetch_elapsed = time_module.time() - fetch_start
+            google_total = sum(len(pois) for pois in google_pools.values())
+            print(f"  🌐 Google returned {google_total} POIs in {fetch_elapsed:.1f}s")
+
+        # =========================================================================
+        # STEP 4: Merge DB + Google with personalization boost
+        # =========================================================================
+        base_pools: dict[str, list[POICandidate]] = {}
+
+        for category in normalized_categories:
+            db_candidates = db_pools.get(category, [])
+            google_candidates = google_pools.get(category, [])
+
+            # Deduplicate by poi_id, preferring Google (newer/personalized)
+            seen_ids = set()
+            merged = []
+
+            # First add Google results (with personalization boost)
+            for poi in google_candidates:
+                if poi.poi_id not in seen_ids:
+                    seen_ids.add(poi.poi_id)
+                    # Apply personalization boost to rank_score
+                    boosted_poi = POICandidate(
+                        poi_id=poi.poi_id,
+                        name=poi.name,
+                        category=poi.category,
+                        tags=poi.tags,
+                        rating=poi.rating,
+                        user_ratings_total=poi.user_ratings_total,
+                        price_level=poi.price_level,
+                        business_status=poi.business_status,
+                        open_now=poi.open_now,
+                        location=poi.location,
+                        lat=poi.lat,
+                        lon=poi.lon,
+                        description=poi.description,
+                        reviews=poi.reviews,
+                        rank_score=(poi.rank_score or 0) + PERSONALIZATION_BOOST,
+                    )
+                    merged.append(boosted_poi)
+
+            # Then add DB results (no boost)
+            for poi in db_candidates:
+                if poi.poi_id not in seen_ids:
+                    seen_ids.add(poi.poi_id)
+                    merged.append(poi)
+
+            # Sort by rank_score (boosted Google results will be higher)
+            merged.sort(key=lambda p: p.rank_score or 0, reverse=True)
+            base_pools[category] = merged
+
+        # =========================================================================
+        # STEP 5: Expand to original aliases and log
+        # =========================================================================
         poi_pools = {}
         for original_category in categories:
             mapped = category_aliases.get(original_category, original_category)
             poi_pools[original_category] = base_pools.get(mapped, [])
 
-        # Log results
         total_pois = sum(len(pois) for pois in poi_pools.values())
-        print(f"  ✓ Bulk fetch complete: {total_pois} POIs across {len(categories)} categories")
-        for category in sorted(categories):
-            pois = poi_pools.get(category, [])
-            if pois:
-                print(f"    {category}: {len(pois)} POIs")
+        db_only = sum(1 for cat in normalized_categories if cat not in categories_to_fetch_from_google and db_pools.get(cat))
+        print(f"  ✓ Hybrid fetch complete: {total_pois} POIs across {len(categories)} categories")
+        print(f"    - From DB only: {db_only} categories")
+        print(f"    - From Google (with personalization): {len(google_pools)} categories")
 
         return poi_pools
+
+    def _is_nightlife_category(self, category: str) -> bool:
+        """Check if a category is nightlife-related (only suitable for evening/night)."""
+        nightlife_keywords = {"nightlife", "night_club", "club", "nightclub"}
+        return any(keyword in category.lower() for keyword in nightlife_keywords)
+
+    def _is_evening_or_night_block(self, start_time) -> bool:
+        """
+        Check if a block is in evening/night time (suitable for nightlife).
+
+        Args:
+            start_time: Block start time (can be datetime.time object or "HH:MM:SS" string)
+
+        Returns:
+            True if block starts at or after 18:00 (6 PM), False otherwise
+        """
+        from datetime import time
+        try:
+            # Handle both datetime.time objects and strings
+            if isinstance(start_time, time):
+                hour = start_time.hour
+            elif isinstance(start_time, str):
+                hour = int(start_time.split(":")[0])
+            else:
+                return False
+
+            # Nightlife suitable only after 18:00 (6 PM)
+            return hour >= 18
+        except (ValueError, IndexError, AttributeError):
+            return False
 
     async def _select_poi_from_pool(
         self,
@@ -761,26 +1086,47 @@ Generate JSON skeleton with desired_categories for each block."""
         Strategy:
         1. Get POI pool for this category
         2. Filter out already used POIs
-        3. Randomly select up to 10 candidates
-        4. Choose best candidate by rank_score
-        5. If no unused POIs, expand search to related categories
-        6. NEVER return None - always find alternative
+        3. Filter nightlife categories by time-of-day (only evening/night)
+        4. Randomly select up to 10 candidates
+        5. Choose best candidate by rank_score
+        6. If no unused POIs, expand search to related categories
+        7. NEVER return None - always find alternative
         """
         import random
         from src.domain.route_trace import BlockSelectionTrace
 
         desired_categories = skeleton_block.desired_categories or []
+        block_start_time = skeleton_block.start_time
+        is_evening_block = self._is_evening_or_night_block(block_start_time)
+
+        # CRITICAL: Filter out nightlife categories if block is during daytime
+        if not is_evening_block:
+            original_count = len(desired_categories)
+            desired_categories = [
+                cat for cat in desired_categories
+                if not self._is_nightlife_category(cat)
+            ]
+            if original_count > len(desired_categories):
+                print(f"🚫 Filtered out nightlife categories for daytime block (start={block_start_time})")
 
         fallback_categories: list[str]
         if skeleton_block.block_type == BlockType.MEAL:
             fallback_categories = ["restaurant", "cafe", "bar"]
         elif skeleton_block.block_type == BlockType.NIGHTLIFE:
-            fallback_categories = ["nightlife", "bar"]
+            # For nightlife blocks, use bar as fallback if too early
+            if not is_evening_block:
+                fallback_categories = ["restaurant", "bar"]
+                print(f"⚠️ Nightlife block at {block_start_time} (before 18:00), using restaurant/bar fallback")
+            else:
+                fallback_categories = ["nightlife", "bar"]
         else:
             fallback_categories = ["attraction", "museum", "park", "shopping"]
 
         candidate_categories = []
         for category in desired_categories + fallback_categories:
+            # Double-check: never add nightlife categories for daytime blocks
+            if not is_evening_block and self._is_nightlife_category(category):
+                continue
             if category not in candidate_categories:
                 candidate_categories.append(category)
 
@@ -797,7 +1143,8 @@ Generate JSON skeleton with desired_categories for each block."""
                     city_center_lon=city_center_lon,
                     max_radius_km=50.0,
                     min_rating=4.0,
-                    limit=12,
+                    limit=EXTERNAL_POI_LIMIT_PER_CATEGORY,
+                    fetch_details=False,  # Skip Place Details for speed
                 )
                 if pool:
                     poi_pools[category] = pool

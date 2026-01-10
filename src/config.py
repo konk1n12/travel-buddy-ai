@@ -133,16 +133,16 @@ class Settings(BaseSettings):
         description="Use agentic Curator/Engineer pipeline when smart routing is enabled"
     )
     agentic_candidate_multiplier: int = Field(
-        default=2,
-        description="Candidate multiplier per required block for agentic POI curation"
+        default=5,
+        description="Candidate multiplier per required block for agentic POI curation (increased for longer trips)"
     )
     agentic_min_candidates_per_category: int = Field(
-        default=6,
-        description="Minimum POI candidates per category for agentic planning"
+        default=20,
+        description="Minimum POI candidates per category for agentic planning (increased to support 7+ day trips)"
     )
     agentic_max_candidates_per_category: int = Field(
-        default=20,
-        description="Maximum POI candidates per category for agentic planning"
+        default=200,
+        description="Maximum POI candidates per category for agentic planning (increased for major tourist cities)"
     )
     agentic_llm_score_weight: float = Field(
         default=0.35,
@@ -302,6 +302,11 @@ class Settings(BaseSettings):
         default=1.5,
         description="Grid cell size for geographic clustering (larger = fewer, bigger districts)"
     )
+
+    max_poi_radius_km: float = Field(
+        default=15.0,
+        description="Maximum distance from city center for POI inclusion (km). POIs beyond this are excluded to prevent far suburbs like Peterhof."
+    )
     min_pois_per_district: int = Field(
         default=5,
         description="Minimum POIs to form a standalone district"
@@ -313,8 +318,8 @@ class Settings(BaseSettings):
 
     # POI quality threshold for smart routing
     smart_routing_min_rating: float = Field(
-        default=4.5,
-        description="Minimum POI rating for smart routing selection"
+        default=4.0,
+        description="Minimum POI rating for smart routing selection (lowered to include more quality venues)"
     )
 
     # Candidate expansion when insufficient POIs in district

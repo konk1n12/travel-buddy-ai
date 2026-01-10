@@ -68,22 +68,35 @@ Guidelines:
 - Include rest blocks for slow/medium pace
 - Each day should have 3 meals + 2-4 activity blocks
 
-CRITICAL - Interest Categories:
+CRITICAL - Interest Categories (STRICT RULES):
 - YOU MUST use the user's interests to populate desired_categories for ALL activity blocks
+- The FIRST category in desired_categories MUST be the PRIMARY category matching the interest
 - Map interests to specific POI types:
-  * "gastronomy" → ["restaurant", "food", "cafe", "bakery", "market"]
-  * "history and museums" → ["museum", "historical site", "monument", "gallery"]
-  * "nightlife" → ["bar", "club", "nightclub", "live music"]
-  * "nature and views" → ["park", "viewpoint", "garden", "nature"]
-  * "shopping" → ["shopping", "market", "boutique", "store"]
-  * "cafes and desserts" → ["cafe", "dessert", "bakery", "pastry shop"]
-  * "modern art" → ["art gallery", "contemporary art", "museum"]
-  * "architecture and districts" → ["landmark", "neighborhood", "historic district"]
-  * "beach and water" → ["beach", "waterfront", "lake", "marina"]
-  * "activities and sports" → ["sports", "recreation", "adventure", "activities"]
-- For meal blocks, use "restaurant" plus cuisine relevant to city (e.g., "french restaurant" in Paris)
-- Each activity block MUST include 2-3 categories from the user's interests
-- DO NOT use generic categories like "sightseeing" or "tourist attraction"
+  * "gastronomy" → ["restaurant", "cafe", "food"]
+  * "museums" → ["museum", "art_gallery", "attraction"]
+  * "modern art" → ["art_gallery", "museum", "attraction"]
+  * "nightlife" → ["bar", "nightclub", "nightlife"]
+  * "views" → ["viewpoint", "attraction", "park"]
+  * "architecture" → ["attraction", "landmark", "viewpoint"] (NEVER include "museum")
+  * "shopping" → ["shopping", "market", "boutique"]
+  * "nature" → ["park", "garden", "nature"]
+  * "history" (without museums) → ["landmark", "monument", "attraction"] (NEVER include "museum")
+  * "beach and water" → ["beach", "waterfront", "lake"]
+
+CRITICAL DIFFERENTIATION:
+- "museums" interest → USE "museum" as FIRST category
+- "architecture" interest → USE "attraction" or "landmark" as FIRST category, NEVER "museum"
+- "views" interest → USE "viewpoint" or "attraction" as FIRST category, NEVER "museum"
+- If interests include BOTH "museums" and "architecture", alternate days between museum-focused and architecture-focused
+
+STRICT EXCLUSION RULES:
+- NEVER include "museum" in desired_categories if interests do NOT explicitly mention: "museums", "art", "history", "modern art"
+- NEVER include "shopping" in desired_categories if interests do NOT explicitly mention: "shopping"
+- NEVER include "nightlife" or "bar" in desired_categories if interests do NOT explicitly mention: "nightlife", "bars", "clubs"
+
+- For meal blocks, use ["restaurant", "cafe", "local cuisine"]
+- Each activity block MUST have 2-3 categories, with the PRIMARY interest category FIRST
+- DO NOT use generic categories like "culture", "sightseeing"
 - NO explanations, NO markdown, ONLY valid JSON"""
 
     def __init__(

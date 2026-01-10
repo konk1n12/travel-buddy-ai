@@ -139,6 +139,10 @@ class SmartRouteOptimizer:
                 hits = []
                 for keyword in keyword_signals:
                     for poi in district.pois:
+                        # Defensive check for correct type
+                        if not hasattr(poi, 'name'):
+                            logger.error(f"❌ BUG in district.pois: poi is {type(poi)}, not POICandidate!")
+                            continue
                         haystack = f"{poi.name} {' '.join(poi.tags or [])}".lower()
                         if keyword in haystack:
                             hits.append(keyword)
@@ -191,7 +195,7 @@ class SmartRouteOptimizer:
                     city=trip_spec.city,
                     desired_categories=[category],
                     budget=trip_spec.budget,
-                    limit=50,  # Large pool for clustering
+                    limit=100,  # Large pool for clustering (increased for better variety)
                     city_center_lat=trip_spec.city_center_lat,
                     city_center_lon=trip_spec.city_center_lon,
                     max_radius_km=50.0,
@@ -329,6 +333,23 @@ class SmartRouteOptimizer:
         scored_candidates.sort(key=lambda item: item[0], reverse=True)
         ordered_candidates = [candidate for _, candidate in scored_candidates]
         selected = ordered_candidates[0]
+
+        # Defensive check for correct type
+        if not hasattr(selected, 'name'):
+            logger.error(
+                f"❌ BUG: selected object is {type(selected)}, not POICandidate! "
+                f"Has attributes: {dir(selected)}"
+            )
+            # Try to find the first valid POICandidate
+            for cand in ordered_candidates:
+                if hasattr(cand, 'name'):
+                    selected = cand
+                    break
+            else:
+                # If no valid candidate found, return None
+                logger.error("No valid POICandidate found in ordered_candidates!")
+                return None, []
+
         logger.info(
             f"Selected '{selected.name}' (rating: {selected.rating}) "
             f"from district {district.district_id}"

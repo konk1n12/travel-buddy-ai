@@ -96,14 +96,21 @@ class IoNetLLMClient(LLMClient):
 
     def _sync_chat_completion(self, messages: list[dict], max_tokens: int) -> str:
         """Synchronous chat completion call."""
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-            max_completion_tokens=max_tokens,
-            stream=False,
-        )
-        return response.choices[0].message.content
+        print(f"🤖 io.net LLM API: model={self.model}, max_tokens={max_tokens}, messages={len(messages)}")
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                max_completion_tokens=max_tokens,
+                stream=False,
+            )
+            content = response.choices[0].message.content
+            print(f"✅ io.net LLM API: Success ({len(content)} chars)")
+            return content
+        except Exception as e:
+            print(f"❌ io.net LLM API: {type(e).__name__}: {e}")
+            raise
 
     async def generate_text(
         self,
@@ -172,6 +179,36 @@ class IoNetLLMClient(LLMClient):
             else:
                 json_text = text_response.strip()
 
+            # Strip Python-style comments (#) and explicit + signs that some LLMs add to JSON
+            import re
+
+            # Step 1: Remove Python-style comments (everything after # on each line)
+            lines = json_text.split('\n')
+            cleaned_lines = []
+            for line in lines:
+                if '#' in line:
+                    # Check if # is inside a string (basic check)
+                    in_string = False
+                    quote_char = None
+                    for i, char in enumerate(line):
+                        if char in ('"', "'") and (i == 0 or line[i-1] != '\\'):
+                            if not in_string:
+                                in_string = True
+                                quote_char = char
+                            elif char == quote_char:
+                                in_string = False
+                                quote_char = None
+                        elif char == '#' and not in_string:
+                            line = line[:i]
+                            break
+                cleaned_lines.append(line.rstrip())
+            json_text = '\n'.join(cleaned_lines)
+
+            # Step 2: Remove explicit + signs before numbers (e.g., +8.0 -> 8.0, +2.0 -> 2.0)
+            json_text = re.sub(r':\s*\+(\d)', r': \1', json_text)
+            json_text = re.sub(r',\s*\+(\d)', r', \1', json_text)
+            json_text = re.sub(r'\[\s*\+(\d)', r'[\1', json_text)
+
             return json.loads(json_text)
         except json.JSONDecodeError as e:
             raise ValueError(
@@ -222,14 +259,20 @@ class AnthropicLLMClient(LLMClient):
         """Generate plain text response using Claude."""
         messages = [{"role": "user", "content": prompt}]
 
-        response = await self.client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            system=system_prompt or "",
-            messages=messages,
-        )
-
-        return response.content[0].text
+        print(f"🤖 Anthropic API: model={self.model}, max_tokens={max_tokens}")
+        try:
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                system=system_prompt or "",
+                messages=messages,
+            )
+            content = response.content[0].text
+            print(f"✅ Anthropic API: Success ({len(content)} chars)")
+            return content
+        except Exception as e:
+            print(f"❌ Anthropic API: {type(e).__name__}: {e}")
+            raise
 
     async def generate_structured(
         self,
@@ -243,14 +286,20 @@ class AnthropicLLMClient(LLMClient):
         """
         messages = [{"role": "user", "content": prompt}]
 
-        response = await self.client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            system=system_prompt or "",
-            messages=messages,
-        )
+        print(f"🤖 Anthropic API (structured): model={self.model}, max_tokens={max_tokens}")
+        try:
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                system=system_prompt or "",
+                messages=messages,
+            )
 
-        text_response = response.content[0].text
+            text_response = response.content[0].text
+            print(f"✅ Anthropic API: Success ({len(text_response)} chars)")
+        except Exception as e:
+            print(f"❌ Anthropic API: {type(e).__name__}: {e}")
+            raise
 
         # Try to parse JSON from response
         try:
@@ -265,6 +314,36 @@ class AnthropicLLMClient(LLMClient):
                 json_text = text_response[json_start:json_end].strip()
             else:
                 json_text = text_response.strip()
+
+            # Strip Python-style comments (#) and explicit + signs that some LLMs add to JSON
+            import re
+
+            # Step 1: Remove Python-style comments (everything after # on each line)
+            lines = json_text.split('\n')
+            cleaned_lines = []
+            for line in lines:
+                if '#' in line:
+                    # Check if # is inside a string (basic check)
+                    in_string = False
+                    quote_char = None
+                    for i, char in enumerate(line):
+                        if char in ('"', "'") and (i == 0 or line[i-1] != '\\'):
+                            if not in_string:
+                                in_string = True
+                                quote_char = char
+                            elif char == quote_char:
+                                in_string = False
+                                quote_char = None
+                        elif char == '#' and not in_string:
+                            line = line[:i]
+                            break
+                cleaned_lines.append(line.rstrip())
+            json_text = '\n'.join(cleaned_lines)
+
+            # Step 2: Remove explicit + signs before numbers (e.g., +8.0 -> 8.0, +2.0 -> 2.0)
+            json_text = re.sub(r':\s*\+(\d)', r': \1', json_text)
+            json_text = re.sub(r',\s*\+(\d)', r', \1', json_text)
+            json_text = re.sub(r'\[\s*\+(\d)', r'[\1', json_text)
 
             return json.loads(json_text)
         except json.JSONDecodeError as e:

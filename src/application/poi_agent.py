@@ -116,6 +116,16 @@ Constraints:
 - Keep keyword lists short (<= 6 items each).
 - min_rating must be between 3.5 and 4.8.
 - preferred_price_levels must be a list of 0-4 integers.
+
+IMPORTANT: category_boosts mapping rules:
+- Use strong positive boosts (+8.0 to +10.0) for interests that match
+- Use strong negative penalties (-4.0 to -6.0) for incompatible categories
+- "architecture", "views", "landmarks" → boost "attraction" (+10.0), penalize "museum" (-6.0)
+- "museum", "art", "history" → boost "museum" (+10.0), boost "attraction" (+3.0), penalize "shopping" (-4.0), penalize "nightlife" (-4.0)
+- "modern art" (separate from "museum") → boost "museum" (+4.0), prefer art galleries via tag_boosts
+- "nightlife", "clubs", "bars" → boost "nightlife" (+8.0), boost "bar" (+6.0), penalize "museum" (-3.0)
+- "shopping" → boost "shopping" (+8.0), penalize "museum" (-3.0)
+- "gastronomy", "food", "culinary" → boost "restaurant" (+8.0), boost "cafe" (+5.0)
 """
 
     def __init__(
@@ -231,6 +241,9 @@ Return JSON with this exact schema:
         prefs = json.dumps(trip_spec.additional_preferences or {}, ensure_ascii=False).lower()
         text = f"{interests} {prefs}"
 
+        print(f"🔍 POI Agent: Building heuristic profile for interests: {trip_spec.interests}")
+        print(f"🔍 POI Agent: Interests text: '{text}'")
+
         profile = POIPreferenceProfile()
         profile.structured_preferences = trip_spec.structured_preferences # Always carry over
 
@@ -249,14 +262,44 @@ Return JSON with this exact schema:
             profile.preferred_price_levels = [3, 4]
             profile.min_rating = 4.4
 
-        if "nightlife" in text:
-            profile.category_boosts["nightlife"] = 1.5
+        # Strong interest-based category boosts for better personalization
+        if "shop" in text:
+            profile.category_boosts["shopping"] = 8.0
+            # Penalty for unrelated categories
+            profile.category_boosts["museum"] = profile.category_boosts.get("museum", 0.0) - 3.0
+
+        if "nightlife" in text or "club" in text:
+            profile.category_boosts["nightlife"] = 8.0
+            profile.category_boosts["bar"] = 6.0
+            # Penalty for day-focused activities
+            profile.category_boosts["museum"] = profile.category_boosts.get("museum", 0.0) - 3.0
 
         if "museum" in text or "history" in text:
-            profile.category_boosts.update({"museum": 1.5, "attraction": 1.2})
+            profile.category_boosts["museum"] = 10.0
+            profile.category_boosts["art_gallery"] = 8.0
+            profile.category_boosts["attraction"] = 3.0  # Lower than museum
+            # Penalty for shopping/nightlife
+            profile.category_boosts["shopping"] = profile.category_boosts.get("shopping", 0.0) - 4.0
+            profile.category_boosts["nightlife"] = profile.category_boosts.get("nightlife", 0.0) - 4.0
 
-        if "food" in text or "gastronomy" in text:
-            profile.category_boosts.update({"restaurant": 1.5, "cafe": 1.1})
+        # Separate art from museums (modern art is different from museum art)
+        if "modern art" in text or ("art" in text and "museum" not in text):
+            profile.category_boosts["art_gallery"] = 10.0
+            profile.category_boosts["museum"] = 4.0  # Some art museums ok, but galleries preferred
+            profile.category_boosts["attraction"] = 3.0
+
+        if "food" in text or "gastronomy" in text or "culinary" in text:
+            profile.category_boosts["restaurant"] = 8.0
+            profile.category_boosts["cafe"] = 5.0
+
+        if "architecture" in text or "view" in text or "landmark" in text:
+            profile.category_boosts["attraction"] = 10.0
+            profile.category_boosts["park"] = 5.0
+            # Strong penalty for museums when focus is on outdoor architecture/views
+            if "museum" not in text and "art" not in text:
+                profile.category_boosts["museum"] = profile.category_boosts.get("museum", 0.0) - 6.0
+            # Penalty for indoor shopping
+            profile.category_boosts["shopping"] = profile.category_boosts.get("shopping", 0.0) - 3.0
 
         # Process structured preferences to populate other profile fields
         for sp in profile.structured_preferences:
@@ -269,6 +312,8 @@ Return JSON with this exact schema:
                 profile.preferred_price_levels = [2]
             elif sp.price_level == "cheap":
                 profile.preferred_price_levels = [0, 1]
+
+        print(f"✅ POI Agent: Final category_boosts: {dict(profile.category_boosts)}")
 
         return profile
 
@@ -299,10 +344,10 @@ def score_candidate(
         else:
             score -= profile.price_level_weight * 0.75
 
-    # Category boosts
-    for category in desired_categories:
-        if candidate.category == category:
-            score += profile.category_boosts.get(category, 0.0)
+    # Category boosts - apply boost for candidate's actual category
+    # This allows penalties to work (e.g., -6.0 for museums when architecture is preferred)
+    if candidate.category and candidate.category in profile.category_boosts:
+        score += profile.category_boosts[candidate.category]
 
     # Keyword boosts/penalties
     haystack = f"{candidate.name} {' '.join(candidate.tags or [])}".lower()

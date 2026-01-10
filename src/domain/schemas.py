@@ -4,7 +4,7 @@ These schemas define the contract between the mobile app and the backend.
 """
 from datetime import date, time
 from typing import Optional, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from uuid import UUID
 
 from src.domain.models import (
@@ -154,6 +154,21 @@ class TripResponse(BaseModel):
 
     additional_preferences: dict
     structured_preferences: list[StructuredPreference] = Field(default_factory=list)
+
+    @field_validator('additional_preferences', mode='before')
+    @classmethod
+    def normalize_additional_preferences(cls, v):
+        """
+        Convert all values in additional_preferences to strings for iOS compatibility.
+
+        iOS expects [String: String]? but LLM may return {"daily_beer": true}.
+        This validator ensures all values are strings: {"daily_beer": "true"}.
+        """
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            return v
+        return {k: str(val) if val is not None else "" for k, val in v.items()}
 
     created_at: str = Field(description="ISO 8601 timestamp")
     updated_at: str = Field(description="ISO 8601 timestamp")

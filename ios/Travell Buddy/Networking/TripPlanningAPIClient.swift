@@ -107,8 +107,9 @@ final class TripPlanningAPIClient: TripPlanningAPIClientProtocol {
     func generateFastDraft(tripId: UUID) async throws -> ItineraryResponseDTO {
         print("⚡ Generating fast draft: \(tripId)")
 
-        // Build request
-        let urlRequest = try requestBuilder.buildRequest(
+        // Build request with extended timeout for new cities (external POI fetching can take 40-60s)
+        let fastDraftBuilder = RequestBuilder(timeout: AppConfig.fastDraftTimeout)
+        let urlRequest = try fastDraftBuilder.buildRequest(
             path: "trips/\(tripId.uuidString.lowercased())/fast-draft",
             method: .post
         )
@@ -160,8 +161,9 @@ final class TripPlanningAPIClient: TripPlanningAPIClientProtocol {
     func planTrip(tripId: String) async throws -> ItineraryResponseDTO {
         print("🗺️ Planning trip: \(tripId)")
 
-        // Build request
-        let urlRequest = try requestBuilder.buildRequest(
+        // Build request with extended timeout (full plan can take 2-5 minutes)
+        let fullPlanBuilder = RequestBuilder(timeout: AppConfig.fullPlanTimeout)
+        let urlRequest = try fullPlanBuilder.buildRequest(
             path: "trips/\(tripId)/plan",
             method: .post
         )

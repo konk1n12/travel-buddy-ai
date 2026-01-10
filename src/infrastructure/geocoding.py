@@ -64,6 +64,7 @@ class GeocodingService:
             "key": self.api_key,
         }
 
+        print(f"🌐 Google Geocoding API: Geocoding city='{city}'")
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.get(self.GEOCODING_BASE_URL, params=params)
@@ -73,13 +74,16 @@ class GeocodingService:
             status = data.get("status", "UNKNOWN")
             if status != "OK":
                 if status == "ZERO_RESULTS":
+                    print(f"⚪ Google Geocoding API: No results for city='{city}'")
                     logger.warning(f"No geocoding results for city: {city}")
                 else:
+                    print(f"❌ Google Geocoding API: Status {status} for city='{city}'")
                     logger.warning(f"Geocoding API returned status: {status}")
                 return None
 
             results = data.get("results", [])
             if not results:
+                print(f"❌ Google Geocoding API: Empty results for city='{city}'")
                 logger.warning(f"Empty results for city: {city}")
                 return None
 
@@ -92,10 +96,12 @@ class GeocodingService:
             lon = location.get("lng")
 
             if lat is None or lon is None:
+                print(f"❌ Google Geocoding API: Missing coordinates for city='{city}'")
                 logger.warning(f"Missing coordinates in geocoding result for: {city}")
                 return None
 
             formatted_address = result.get("formatted_address", city)
+            print(f"✅ Google Geocoding API: {city} → ({lat:.4f}, {lon:.4f})")
 
             logger.info(f"Geocoded '{city}' to ({lat}, {lon})")
 
@@ -107,12 +113,15 @@ class GeocodingService:
             )
 
         except httpx.TimeoutException:
+            print(f"❌ Google Geocoding API: Timeout for city='{city}'")
             logger.warning(f"Geocoding API timeout for city: {city}")
             return None
         except httpx.HTTPStatusError as e:
+            print(f"❌ Google Geocoding API: HTTP {e.response.status_code} for city='{city}'")
             logger.warning(f"Geocoding API HTTP error: {e.response.status_code}")
             return None
         except Exception as e:
+            print(f"❌ Google Geocoding API: {type(e).__name__}: {e} for city='{city}'")
             logger.error(f"Unexpected error during geocoding: {e}")
             return None
 
