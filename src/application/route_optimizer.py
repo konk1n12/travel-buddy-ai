@@ -16,6 +16,8 @@ Features:
 import logging
 import json
 import itertools
+import time
+import asyncio
 from uuid import UUID
 from typing import Optional
 from datetime import datetime
@@ -39,6 +41,16 @@ from src.infrastructure.travel_time import TravelTimeProvider, TravelLocation, g
 from src.infrastructure.llm_client import LLMClient, get_poi_selection_llm_client
 from src.infrastructure.poi_providers import haversine_distance_km
 from src.infrastructure.models import ItineraryModel
+from src.application.poi_selection_llm import (
+    POISelectionLLMService,
+    TripContext,
+    DayContext,
+    BlockContext,
+    build_trip_context_from_response,
+    normalize_category,
+)
+from src.application.poi_planner import SearchDirective
+from src.application.poi_curator import POICuratorAgent
 
 logger = logging.getLogger(__name__)
 
@@ -472,6 +484,178 @@ You must include every block exactly once and return only JSON."""
             self._route_order_llm_client = None
         return self._route_order_llm_client
 
+    def _get_poi_selection_llm(self) -> POISelectionLLMService:
+        """Lazy initialization of POI selection LLM service."""
+        if self._poi_selection_llm is None:
+            self._poi_selection_llm = POISelectionLLMService(app_settings=self._settings)
+        return self._poi_selection_llm
+
+    def _build_preference_summary(self, profile: POIPreferenceProfile) -> dict:
+        return {
+            "must_include_keywords": profile.must_include_keywords,
+            "avoid_keywords": profile.avoid_keywords,
+            "search_keywords": profile.search_keywords,
+            "category_boosts": profile.category_boosts,
+            "tag_boosts": profile.tag_boosts,
+            "min_rating": profile.min_rating,
+            "preferred_price_levels": profile.preferred_price_levels,
+            "structured_preferences": [p.model_dump() for p in profile.structured_preferences or []],
+        }
+
+    def _block_type_for_request_category(self, category: str) -> BlockType:
+        if category in {"restaurant", "cafe", "bakery", "food"}:
+            return BlockType.MEAL
+        if category in {"bar", "nightlife"}:
+            return BlockType.NIGHTLIFE
+        return BlockType.ACTIVITY
+
+    def _normalize_llm_requests(self, raw_requests: list[dict]) -> list[SearchDirective]:
+        directives: list[SearchDirective] = []
+        seen_categories: set[str] = set()
+
+        for item in raw_requests or []:
+            if not isinstance(item, dict):
+                continue
+            category = normalize_category(item.get("category"))
+            if not category or category in seen_categories:
+                continue
+            keywords_raw = item.get("keywords", [])
+            keywords: list[str] = []
+            if isinstance(keywords_raw, list):
+                for keyword in keywords_raw:
+                    keyword = str(keyword).strip().lower()
+                    if keyword and keyword not in keywords:
+                        keywords.append(keyword)
+
+            try:
+                min_count = int(item.get("min_count", 0))
+            except (TypeError, ValueError):
+                min_count = 0
+            if min_count <= 0:
+                min_count = self._settings.agentic_min_candidates_per_category
+            min_count = min(
+                max(min_count, self._settings.agentic_min_candidates_per_category),
+                self._settings.agentic_max_candidates_per_category,
+            )
+
+            priority = item.get("priority", "normal")
+            if priority not in {"must", "high", "normal"}:
+                priority = "normal"
+
+            directives.append(SearchDirective(
+                category=category,
+                keywords=keywords[:4],
+                min_count=min_count,
+                priority=priority,
+                block_type=self._block_type_for_request_category(category),
+            ))
+            seen_categories.add(category)
+            if len(directives) >= 3:
+                break
+
+        return directives
+
+    def _dedupe_day_selections(
+        self,
+        selected_by_block: dict[int, POICandidate],
+        candidates_by_block: dict[int, list[POICandidate]],
+        used_poi_ids: set[UUID],
+        used_poi_names: set[str],
+    ) -> dict[int, POICandidate]:
+        """Ensure unique POIs (by ID and name) within a day AND across the entire trip."""
+        deduped: dict[int, POICandidate] = {}
+        seen_ids: set[UUID] = set()
+        seen_names: set[str] = set()
+
+        for block_index in sorted(candidates_by_block.keys()):
+            candidate = selected_by_block.get(block_index)
+            # STRICT: Check both within-day and trip-wide uniqueness (by ID and name)
+            if (candidate and
+                candidate.poi_id not in seen_ids and
+                candidate.poi_id not in used_poi_ids and
+                candidate.name not in seen_names and
+                candidate.name not in used_poi_names):
+                deduped[block_index] = candidate
+                seen_ids.add(candidate.poi_id)
+                seen_names.add(candidate.name)
+                continue
+
+            # Find unused replacement (strict - no reuse by ID or name across trip)
+            replacement = None
+            for alt in candidates_by_block.get(block_index, []):
+                if (alt.poi_id in seen_ids or
+                    alt.poi_id in used_poi_ids or
+                    alt.name in seen_names or
+                    alt.name in used_poi_names):
+                    continue
+                replacement = alt
+                break
+
+            if replacement:
+                deduped[block_index] = replacement
+                seen_ids.add(replacement.poi_id)
+                seen_names.add(replacement.name)
+
+        return deduped
+
+    def _suggest_cluster_order(
+        self,
+        cluster_blocks: list[BlockWithPOI],
+        prev_poi: Optional[POICandidate],
+        next_poi: Optional[POICandidate],
+    ) -> tuple[list[int], float]:
+        """Produce a heuristic order for LLM hints."""
+        remaining = [block for block in cluster_blocks]
+        if not remaining:
+            return [], 0.0
+
+        def distance(a: Optional[POICandidate], b: Optional[POICandidate]) -> float:
+            return self._calculate_travel_cost_km(a, b)
+
+        current_poi = prev_poi or remaining[0].poi
+        ordered: list[BlockWithPOI] = []
+        while remaining:
+            next_block = min(
+                remaining,
+                key=lambda block: distance(current_poi, block.poi),
+            )
+            ordered.append(next_block)
+            remaining.remove(next_block)
+            current_poi = next_block.poi
+
+        improved = self._two_opt_order(ordered, prev_poi, next_poi)
+        cost = self._calculate_cluster_travel_cost(improved, prev_poi, next_poi)
+        return [block.original_index for block in improved], cost
+
+    def _two_opt_order(
+        self,
+        blocks: list[BlockWithPOI],
+        prev_poi: Optional[POICandidate],
+        next_poi: Optional[POICandidate],
+    ) -> list[BlockWithPOI]:
+        """Lightweight 2-opt improvement on block order."""
+        if len(blocks) < 3:
+            return blocks
+
+        def total_cost(order: list[BlockWithPOI]) -> float:
+            return self._calculate_cluster_travel_cost(order, prev_poi, next_poi)
+
+        best = list(blocks)
+        best_cost = total_cost(best)
+        improved = True
+        while improved:
+            improved = False
+            for i in range(1, len(best) - 1):
+                for j in range(i + 1, len(best)):
+                    candidate = best[:i] + list(reversed(best[i:j])) + best[j:]
+                    candidate_cost = total_cost(candidate)
+                    if candidate_cost + 1e-3 < best_cost:
+                        best = candidate
+                        best_cost = candidate_cost
+                        improved = True
+        return best
+
+
     def _build_route_order_prompt(
         self,
         cluster_blocks: list[BlockWithPOI],
@@ -734,6 +918,452 @@ Return JSON only:
 
         return result
 
+    def _matches_structured_preference(
+        self,
+        candidate: POICandidate,
+        preference,
+    ) -> bool:
+        keyword = (preference.keyword or "").lower()
+        category = normalize_category(preference.category)
+
+        if category:
+            candidate_category = (candidate.category or "").lower()
+            if category not in candidate_category:
+                if not candidate.tags or not any(category == tag.lower() for tag in candidate.tags):
+                    return False
+
+        if keyword:
+            haystack = f"{candidate.name} {' '.join(candidate.tags or [])} {candidate.description or ''}".lower()
+            if keyword not in haystack:
+                return False
+
+        if preference.price_level and candidate.price_level is not None:
+            price_map = {"cheap": [0, 1], "moderate": [2], "expensive": [3, 4]}
+            if candidate.price_level not in price_map.get(preference.price_level, []):
+                return False
+
+        return True
+
+    def _select_must_include_pois(
+        self,
+        trip_spec,
+        curated_bank,
+        preference_profile: POIPreferenceProfile,
+    ) -> dict[str, list[POICandidate]]:
+        must_include_map: dict[str, list[POICandidate]] = {}
+        if not trip_spec.structured_preferences:
+            return must_include_map
+
+        for pref in trip_spec.structured_preferences:
+            candidates = [
+                c for c in curated_bank.candidates
+                if self._matches_structured_preference(c, pref)
+            ]
+
+            if not candidates:
+                candidates = [
+                    c for c in curated_bank.candidates
+                    if pref.category.lower() in (c.category or "").lower()
+                ]
+
+            if not candidates:
+                continue
+
+            scored = []
+            for candidate in candidates:
+                score = score_candidate(
+                    candidate=candidate,
+                    block_type=self._block_type_for_preference(pref.category),
+                    desired_categories=[pref.category],
+                    profile=preference_profile,
+                    anchor_lat=trip_spec.hotel_lat,
+                    anchor_lon=trip_spec.hotel_lon,
+                    day_center_lat=trip_spec.city_center_lat,
+                    day_center_lon=trip_spec.city_center_lon,
+                    distance_weight=self._settings.hotel_anchor_distance_weight,
+                )
+                llm_score = curated_bank.llm_scores.get(candidate.poi_id, 0.0)
+                score += llm_score * self._settings.agentic_llm_score_weight
+                scored.append((score, candidate))
+
+            scored.sort(key=lambda item: item[0], reverse=True)
+            quantity = pref.quantity or 1
+            key = f"{pref.category}:{pref.keyword}".strip()
+            must_include_map[key] = [c for _, c in scored[:quantity]]
+
+        return must_include_map
+
+    def _block_type_for_preference(self, category: str) -> BlockType:
+        lower = (category or "").lower()
+        if lower in {"restaurant", "cafe", "bakery", "food"}:
+            return BlockType.MEAL
+        if lower in {"bar", "nightlife", "club", "nightclub", "pub"}:
+            return BlockType.NIGHTLIFE
+        return BlockType.ACTIVITY
+
+    def _assign_must_include_to_blocks(
+        self,
+        macro_plan,
+        must_include_map: dict[str, list[POICandidate]],
+    ) -> dict[tuple[int, int], POICandidate]:
+        assignments: dict[tuple[int, int], POICandidate] = {}
+        if not must_include_map:
+            return assignments
+
+        eligible_blocks = []
+        for day in macro_plan.days:
+            for block_index, block in enumerate(day.blocks):
+                if block.block_type not in self.BLOCK_TYPES_NEEDING_POIS:
+                    continue
+                eligible_blocks.append((day.day_number, block_index, block.block_type, block))
+
+        used_blocks = set()
+        for keyword, candidates in must_include_map.items():
+            for candidate in candidates:
+                placed = False
+                for day_number, block_index, block_type, block in eligible_blocks:
+                    if (day_number, block_index) in used_blocks:
+                        continue
+                    if block_type != self._block_type_for_preference(candidate.category):
+                        continue
+                    assignments[(day_number, block_index)] = candidate
+                    used_blocks.add((day_number, block_index))
+                    placed = True
+                    break
+                if not placed:
+                    for day_number, block_index, _, _ in eligible_blocks:
+                        if (day_number, block_index) in used_blocks:
+                            continue
+                        assignments[(day_number, block_index)] = candidate
+                        used_blocks.add((day_number, block_index))
+                        break
+
+        return assignments
+
+    def _rank_candidates_for_block(
+        self,
+        candidates: list[POICandidate],
+        skeleton_block,
+        preference_profile: POIPreferenceProfile,
+        trip_spec,
+        curated_bank,
+        anchor_lat: Optional[float],
+        anchor_lon: Optional[float],
+    ) -> list[POICandidate]:
+        must_ids = set(curated_bank.must_visit_ids or [])
+        nice_ids = set(curated_bank.nice_to_have_ids or [])
+        scored = []
+        for candidate in candidates:
+            score = score_candidate(
+                candidate=candidate,
+                block_type=skeleton_block.block_type,
+                desired_categories=skeleton_block.desired_categories,
+                profile=preference_profile,
+                anchor_lat=anchor_lat,
+                anchor_lon=anchor_lon,
+                day_center_lat=trip_spec.city_center_lat,
+                day_center_lon=trip_spec.city_center_lon,
+                distance_weight=self._settings.hotel_anchor_distance_weight,
+            )
+            llm_score = curated_bank.llm_scores.get(candidate.poi_id, 0.0)
+            score += llm_score * self._settings.agentic_llm_score_weight
+            if candidate.poi_id in must_ids:
+                score += 8.0
+            elif candidate.poi_id in nice_ids:
+                score += 3.5
+            scored.append((score, candidate))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [candidate for _, candidate in scored]
+
+    def _build_district_summaries(
+        self,
+        clustering_result,
+        macro_plan,
+        preference_profile: POIPreferenceProfile,
+    ) -> list[dict]:
+        needed_categories = set()
+        for day in macro_plan.days:
+            for block in day.blocks:
+                if self._block_needs_poi(block.block_type):
+                    for category in block.desired_categories or []:
+                        needed_categories.add(category)
+
+        summaries = []
+        keyword_signals = set(preference_profile.must_include_keywords) | set(preference_profile.tag_boosts.keys())
+
+        for district in clustering_result.districts.values():
+            if needed_categories and not district.has_category(list(needed_categories)):
+                continue
+
+            candidates = list(district.pois)
+            scored = []
+            for candidate in candidates:
+                scored.append(score_candidate(
+                    candidate=candidate,
+                    block_type=BlockType.ACTIVITY,
+                    desired_categories=list(needed_categories),
+                    profile=preference_profile,
+                    anchor_lat=district.center_lat,
+                    anchor_lon=district.center_lon,
+                    distance_weight=0.2,
+                ))
+
+            scored.sort(reverse=True)
+            top_scores = scored[:5]
+            preference_score = round(sum(top_scores) / len(top_scores), 2) if top_scores else 0.0
+
+            summary = district.to_llm_summary()
+            summary["preference_score"] = preference_score
+            summary["category_coverage"] = [
+                category for category in sorted(needed_categories)
+                if district.has_category([category])
+            ]
+
+            if keyword_signals:
+                hits = []
+                for keyword in keyword_signals:
+                    for poi in district.pois:
+                        haystack = f"{poi.name} {' '.join(poi.tags or [])}".lower()
+                        if keyword in haystack:
+                            hits.append(keyword)
+                            break
+                summary["preference_signals"] = hits[:5]
+
+            summaries.append(summary)
+
+        return summaries
+
+    def _collect_candidates_for_block(
+        self,
+        skeleton_block,
+        curated_bank,
+        district_id: Optional[str],
+    ) -> list[POICandidate]:
+        initial_count = len(curated_bank.candidates)
+        candidates = curated_bank.candidates
+        used_district_filter = False
+
+        if district_id and curated_bank.clustering_result:
+            district = curated_bank.clustering_result.get_district(district_id)
+            if district:
+                candidates = district.pois
+                used_district_filter = True
+                logger.debug(f"District filter: {initial_count} → {len(candidates)} candidates")
+
+        desired = set([c.lower() for c in (skeleton_block.desired_categories or [])])
+        if desired:
+            before_category_filter = len(candidates)
+            filtered = []
+            for candidate in candidates:
+                category = (candidate.category or "").lower()
+                if category in desired:
+                    filtered.append(candidate)
+                    continue
+                if candidate.tags and any(tag.lower() in desired for tag in candidate.tags):
+                    filtered.append(candidate)
+            candidates = filtered
+            logger.debug(
+                f"Category filter ({desired}): {before_category_filter} → {len(candidates)} candidates "
+                f"(block_type={skeleton_block.block_type})"
+            )
+
+        # CRITICAL FALLBACK: If filtering left too few candidates, expand search
+        # Lowered threshold from 3 to 10 to ensure sufficient variety
+        min_candidates_threshold = 10
+        if len(candidates) < min_candidates_threshold:
+            logger.warning(
+                f"⚠️ Only {len(candidates)} candidates after filtering (need {min_candidates_threshold}), "
+                f"expanding search for {skeleton_block.block_type}"
+            )
+            candidates = curated_bank.candidates
+            # Reapply category filter if needed
+            if desired:
+                filtered = []
+                for candidate in candidates:
+                    category = (candidate.category or "").lower()
+                    if category in desired:
+                        filtered.append(candidate)
+                        continue
+                    if candidate.tags and any(tag.lower() in desired for tag in candidate.tags):
+                        filtered.append(candidate)
+                candidates = filtered
+                logger.info(f"✅ After city-wide expansion: {len(candidates)} candidates")
+
+        return candidates
+
+    async def _select_pois_for_day_agentic(
+        self,
+        day_skeleton,
+        trip_spec,
+        curated_bank,
+        preference_profile: POIPreferenceProfile,
+        preference_summary: dict,
+        district_plan,
+        must_include_assignments: dict[tuple[int, int], POICandidate],
+        used_poi_ids: set[UUID],
+        used_poi_names: set[str],
+        enable_llm: bool = True,
+        deadline_ts: Optional[float] = None,
+    ) -> tuple[
+        dict[int, POICandidate],
+        dict[int, list[POICandidate]],
+        bool,
+        list[SearchDirective],
+    ]:
+        candidates_by_block: dict[int, list[POICandidate]] = {}
+        block_contexts: dict[int, BlockContext] = {}
+        llm_failed = False
+        llm_requests: list[SearchDirective] = []
+
+        anchor_lat = trip_spec.hotel_lat or trip_spec.city_center_lat
+        anchor_lon = trip_spec.hotel_lon or trip_spec.city_center_lon
+
+        for block_index, block in enumerate(day_skeleton.blocks):
+            if block.block_type not in self.BLOCK_TYPES_NEEDING_POIS:
+                continue
+
+            locked = must_include_assignments.get((day_skeleton.day_number, block_index))
+            if locked:
+                candidates_by_block[block_index] = [locked]
+                block_contexts[block_index] = BlockContext(
+                    block_index=block_index,
+                    block_type=block.block_type,
+                    start_time=str(block.start_time),
+                    end_time=str(block.end_time),
+                    theme=block.theme,
+                    desired_categories=block.desired_categories,
+                )
+                continue
+
+            district_id = district_plan.get_district_for_block(block_index) if district_plan else None
+            candidates = self._collect_candidates_for_block(block, curated_bank, district_id)
+            if not candidates:
+                try:
+                    from src.infrastructure.database import AsyncSessionLocal
+                    from src.infrastructure.poi_providers import get_poi_provider
+
+                    async with AsyncSessionLocal() as session:
+                        provider = get_poi_provider(session)
+                        candidates = await provider.search_pois(
+                            city=trip_spec.city,
+                            desired_categories=block.desired_categories,
+                            budget=trip_spec.budget,
+                            limit=6,
+                            center_location=trip_spec.hotel_location,
+                            city_center_lat=trip_spec.city_center_lat,
+                            city_center_lon=trip_spec.city_center_lon,
+                            block_type=block.block_type,
+                            search_keywords=preference_profile.search_keywords if (
+                                preference_profile and block.block_type == BlockType.MEAL
+                            ) else None,
+                            fetch_details=False,
+                        )
+                except Exception as exc:
+                    logger.warning(f"On-demand POI fetch failed: {exc}")
+            candidates = filter_candidates_for_block(
+                candidates=candidates,
+                profile=preference_profile,
+                block_type=block.block_type,
+            )
+            ranked = self._rank_candidates_for_block(
+                candidates=candidates,
+                skeleton_block=block,
+                preference_profile=preference_profile,
+                trip_spec=trip_spec,
+                curated_bank=curated_bank,
+                anchor_lat=anchor_lat,
+                anchor_lon=anchor_lon,
+            )
+            # STRICT: Only allow unused POIs (by ID and name) - NO FALLBACK TO DUPLICATES
+            before_filter = len(ranked)
+            ranked = [c for c in ranked if c.poi_id not in used_poi_ids and c.name not in used_poi_names]
+            after_filter = len(ranked)
+            if before_filter != after_filter:
+                filtered_out = [c for c in candidates if c.poi_id in used_poi_ids or c.name in used_poi_names]
+                logger.warning(
+                    f"🚫 Day {day_skeleton.day_number}, Block {block_index}: "
+                    f"Filtered out {before_filter - after_filter} duplicate POIs: "
+                    f"{[c.name for c in filtered_out[:5]]}"
+                )
+            if not ranked:
+                logger.warning(
+                    f"❌ Day {day_skeleton.day_number}, Block {block_index}: "
+                    f"No unused POI candidates available! Total used IDs: {len(used_poi_ids)}, "
+                    f"Total used names: {len(used_poi_names)}, "
+                    f"Total candidates before filtering: {len(candidates)}"
+                )
+                # DO NOT use duplicates - leave block empty if no unique POIs available
+                continue
+            candidates_by_block[block_index] = ranked[:max(5, self._settings.agentic_day_selection_max_candidates)]
+            block_contexts[block_index] = BlockContext(
+                block_index=block_index,
+                block_type=block.block_type,
+                start_time=str(block.start_time),
+                end_time=str(block.end_time),
+                theme=block.theme,
+                desired_categories=block.desired_categories,
+            )
+
+        selected_by_block: dict[int, POICandidate] = {}
+        if candidates_by_block and enable_llm:
+            trip_context = build_trip_context_from_response(trip_spec)
+            day_context = DayContext(
+                day_number=day_skeleton.day_number,
+                date=str(day_skeleton.date),
+                theme=day_skeleton.theme,
+                already_selected_poi_ids=list(used_poi_ids),
+            )
+
+            selection_llm = self._get_poi_selection_llm()
+            try:
+                if deadline_ts is not None:
+                    remaining = deadline_ts - time.monotonic()
+                    if remaining <= float(self._settings.day_level_selection_llm_timeout_seconds):
+                        raise TimeoutError("Insufficient time budget for day-level LLM")
+                selected_by_block, raw_requests = await asyncio.wait_for(
+                    selection_llm.select_pois_for_day_with_requests(
+                        trip_context=trip_context,
+                        day_context=day_context,
+                        blocks=[block_contexts[idx] for idx in sorted(block_contexts)],
+                        candidates_by_block=candidates_by_block,
+                        already_selected_ids=set(used_poi_ids),
+                        max_hop_distance_km=self._settings.max_hop_distance_km,
+                        anchor_lat=anchor_lat,
+                        anchor_lon=anchor_lon,
+                        city_center_lat=trip_spec.city_center_lat,
+                        city_center_lon=trip_spec.city_center_lon,
+                        preference_summary=preference_summary,
+                        must_visit_ids=curated_bank.must_visit_ids,
+                        nice_to_have_ids=curated_bank.nice_to_have_ids,
+                    ),
+                    timeout=float(self._settings.day_level_selection_llm_timeout_seconds),
+                )
+                llm_requests = self._normalize_llm_requests(raw_requests)
+            except Exception as exc:
+                logger.warning(f"Agentic day-level LLM selection failed: {exc}")
+                selected_by_block = {}
+                llm_failed = True
+        elif candidates_by_block and enable_llm is False:
+            llm_failed = False
+
+        if not selected_by_block:
+            if candidates_by_block and enable_llm:
+                llm_failed = True
+            for block_index, candidates in candidates_by_block.items():
+                if candidates:
+                    selected_by_block[block_index] = candidates[0]
+
+        if candidates_by_block:
+            selected_by_block = self._dedupe_day_selections(
+                selected_by_block=selected_by_block,
+                candidates_by_block=candidates_by_block,
+                used_poi_ids=used_poi_ids,
+                used_poi_names=used_poi_names,
+            )
+
+        return selected_by_block, candidates_by_block, llm_failed, llm_requests
+
     async def generate_itinerary(
         self,
         trip_id: UUID,
@@ -768,14 +1398,32 @@ Return JSON only:
             preference_agent = POIPreferenceAgent(app_settings=self._settings)
             preference_profile = await preference_agent.build_profile(trip_spec)
 
-        # 3. Load POI plan
+        # 3. Load POI plan (or generate if missing)
         result = await db.execute(
             select(ItineraryModel).where(ItineraryModel.trip_id == trip_id)
         )
         itinerary_model = result.scalars().first()
 
         if not itinerary_model or not itinerary_model.poi_plan:
-            raise ValueError(f"No POI plan found for trip {trip_id}. Generate POI plan first.")
+            # Auto-generate POI plan if missing
+            logger.info(f"POI plan missing for trip {trip_id}, generating automatically")
+            from src.application.poi_planner import POIPlanner
+
+            poi_planner = POIPlanner()
+            await poi_planner.generate_poi_plan(
+                trip_id,
+                db,
+                preference_profile=preference_profile,
+            )
+
+            # Reload itinerary model after POI plan generation
+            result = await db.execute(
+                select(ItineraryModel).where(ItineraryModel.trip_id == trip_id)
+            )
+            itinerary_model = result.scalars().first()
+
+            if not itinerary_model or not itinerary_model.poi_plan:
+                raise ValueError(f"Failed to generate POI plan for trip {trip_id}.")
 
         # Parse POI plan blocks
         poi_plan_blocks = [POIPlanBlock(**block_data) for block_data in itinerary_model.poi_plan]
@@ -970,6 +1618,386 @@ Return JSON only:
             created_at=created_at.isoformat() + "Z",
         )
 
+    async def generate_agentic_itinerary(
+        self,
+        trip_id: UUID,
+        db: AsyncSession,
+        preference_profile: Optional["POIPreferenceProfile"] = None,
+        deadline_ts: Optional[float] = None,
+    ) -> ItineraryResponse:
+        """
+        Generate itinerary using agentic POI Curator + Route Engineer pipeline.
+        """
+        logger.warning(f"🚀🚀🚀 generate_agentic_itinerary STARTED for trip {trip_id}")
+
+        # 1. Load trip spec
+        trip_spec = await self.trip_spec_collector.get_trip(trip_id, db)
+        if not trip_spec:
+            raise ValueError(f"Trip {trip_id} not found")
+
+        # 2. Load macro plan
+        macro_plan = await self.macro_planner.get_macro_plan(trip_id, db)
+        if not macro_plan:
+            raise ValueError(f"No macro plan found for trip {trip_id}. Generate macro plan first.")
+
+        # 3. Build preference profile if not provided
+        if preference_profile is None:
+            preference_agent = POIPreferenceAgent(app_settings=self._settings)
+            preference_profile = await preference_agent.build_profile(trip_spec)
+
+        # 4. Curate POI bank
+        curator = POICuratorAgent(app_settings=self._settings)
+        curated_bank = await curator.curate_poi_bank(
+            trip_spec=trip_spec,
+            macro_plan=macro_plan,
+            db=db,
+            preference_profile=preference_profile,
+            deadline_ts=deadline_ts,
+        )
+
+        if not curated_bank.candidates:
+            raise ValueError("POI Curator returned no candidates")
+
+        # 5. Must-include assignments
+        must_include_map = self._select_must_include_pois(
+            trip_spec=trip_spec,
+            curated_bank=curated_bank,
+            preference_profile=preference_profile,
+        )
+        must_include_assignments = self._assign_must_include_to_blocks(
+            macro_plan=macro_plan,
+            must_include_map=must_include_map,
+        )
+
+        preference_summary = self._build_preference_summary(preference_profile)
+
+        # 6. District planning (if clustering available)
+        day_district_plans = {}
+        skip_districts = False
+        if deadline_ts is not None:
+            remaining = deadline_ts - time.monotonic()
+            if remaining < 8:
+                skip_districts = True
+
+        if (
+            not skip_districts
+            and curated_bank.clustering_result
+            and curated_bank.clustering_result.districts
+        ):
+            from src.application.district_planner import DistrictPlanner
+
+            district_planner = DistrictPlanner(
+                use_llm=(
+                    self._settings.use_llm_for_district_planning
+                    and self._settings.agentic_use_llm_for_district_planning
+                ),
+                app_settings=self._settings,
+            )
+            district_summaries = self._build_district_summaries(
+                curated_bank.clustering_result,
+                macro_plan,
+                preference_profile,
+            )
+
+            previous_anchor = None
+            previous_district_id = None
+            for day in macro_plan.days:
+                try:
+                    day_plan = await asyncio.wait_for(
+                        district_planner.plan_districts(
+                            day_skeleton=day,
+                            clustering_result=curated_bank.clustering_result,
+                            city=trip_spec.city,
+                            district_summaries=district_summaries,
+                            preference_summary=preference_summary,
+                            previous_day_anchor=previous_anchor,
+                            previous_day_district_id=previous_district_id,
+                        ),
+                        timeout=12,
+                    )
+                except Exception as exc:
+                    logger.warning(f"District planning timed out, using deterministic: {exc}")
+                    fallback_planner = DistrictPlanner(
+                        use_llm=False,
+                        app_settings=self._settings,
+                    )
+                    day_plan = await fallback_planner.plan_districts(
+                        day_skeleton=day,
+                        clustering_result=curated_bank.clustering_result,
+                        city=trip_spec.city,
+                        district_summaries=district_summaries,
+                        preference_summary=preference_summary,
+                        previous_day_anchor=previous_anchor,
+                        previous_day_district_id=previous_district_id,
+                    )
+                day_district_plans[day.day_number] = day_plan
+                if day_plan.assignments:
+                    previous_district_id = day_plan.assignments[-1].district_id
+                if previous_district_id:
+                    district = curated_bank.clustering_result.get_district(previous_district_id)
+                    if district:
+                        previous_anchor = {"lat": district.center_lat, "lon": district.center_lon}
+
+        # 7. Build itinerary days
+        itinerary_days = []
+        poi_plan_blocks = []
+        trip_used_poi_ids: set[UUID] = set()
+        trip_used_poi_names: set[str] = set()  # Track names to avoid duplicate businesses/chains
+        previous_day_last_poi: Optional[POICandidate] = None
+        day_llm_enabled = (
+            self._settings.enable_day_level_poi_selection
+            and self._settings.agentic_use_day_level_poi_selection
+        )
+
+        logger.warning(f"🔄🔄🔄 Starting day-by-day POI selection loop for {len(macro_plan.days)} days")
+
+        for day_skeleton in macro_plan.days:
+            logger.warning(f"📅 Processing Day {day_skeleton.day_number}, current used POIs: {len(trip_used_poi_ids)} IDs, {len(trip_used_poi_names)} names")
+            district_plan = day_district_plans.get(day_skeleton.day_number)
+
+            if deadline_ts is not None and day_llm_enabled:
+                remaining = deadline_ts - time.monotonic()
+                if remaining <= float(self._settings.day_level_selection_llm_timeout_seconds) + 2:
+                    day_llm_enabled = False
+
+            selected_by_block, candidates_by_block, llm_failed, llm_requests = await self._select_pois_for_day_agentic(
+                day_skeleton=day_skeleton,
+                trip_spec=trip_spec,
+                curated_bank=curated_bank,
+                preference_profile=preference_profile,
+                preference_summary=preference_summary,
+                district_plan=district_plan,
+                must_include_assignments=must_include_assignments,
+                used_poi_ids=trip_used_poi_ids,
+                used_poi_names=trip_used_poi_names,
+                enable_llm=day_llm_enabled,
+                deadline_ts=deadline_ts,
+            )
+            if llm_failed:
+                day_llm_enabled = False
+
+            logger.warning(
+                f"🔍 Day {day_skeleton.day_number} FIRST selection: "
+                f"{len(selected_by_block)} POIs selected: "
+                f"{[poi.name for poi in selected_by_block.values()]}"
+            )
+
+            if llm_requests and deadline_ts is not None:
+                remaining = deadline_ts - time.monotonic()
+                if remaining > 10:
+                    # CRITICAL: Add POIs from first selection to used sets BEFORE retry
+                    # to prevent selecting them again in different blocks
+                    first_selection_ids = {poi.poi_id for poi in selected_by_block.values()}
+                    first_selection_names = {poi.name for poi in selected_by_block.values()}
+                    logger.warning(
+                        f"🔄 Day {day_skeleton.day_number} expanding candidates, "
+                        f"protecting {len(first_selection_ids)} POIs from first selection"
+                    )
+
+                    curated_bank = await curator.expand_candidates(
+                        requests=llm_requests,
+                        trip_spec=trip_spec,
+                        db=db,
+                        curated_bank=curated_bank,
+                        preference_profile=preference_profile,
+                        deadline_ts=deadline_ts,
+                    )
+
+                    # Pass updated used sets that include first selection
+                    temp_used_poi_ids = trip_used_poi_ids | first_selection_ids
+                    temp_used_poi_names = trip_used_poi_names | first_selection_names
+                    selected_by_block, candidates_by_block, _, _ = await self._select_pois_for_day_agentic(
+                        day_skeleton=day_skeleton,
+                        trip_spec=trip_spec,
+                        curated_bank=curated_bank,
+                        preference_profile=preference_profile,
+                        preference_summary=preference_summary,
+                        district_plan=district_plan,
+                        must_include_assignments=must_include_assignments,
+                        used_poi_ids=temp_used_poi_ids,  # Use temp set with first selection
+                        used_poi_names=temp_used_poi_names,  # Use temp set with first selection
+                        enable_llm=day_llm_enabled,
+                        deadline_ts=deadline_ts,
+                    )
+
+                    logger.warning(
+                        f"🔍 Day {day_skeleton.day_number} SECOND selection (after expansion): "
+                        f"{len(selected_by_block)} POIs selected: "
+                        f"{[poi.name for poi in selected_by_block.values()]}"
+                    )
+
+            for poi in selected_by_block.values():
+                logger.warning(f"➕ Adding to trip_used: {poi.name} (ID: {poi.poi_id})")
+                trip_used_poi_ids.add(poi.poi_id)
+                trip_used_poi_names.add(poi.name)
+
+            # Build POI plan blocks (store top candidates per block)
+            for block_index, block in enumerate(day_skeleton.blocks):
+                if block.block_type not in self.BLOCK_TYPES_NEEDING_POIS:
+                    continue
+                candidates = candidates_by_block.get(block_index, [])
+                selected = selected_by_block.get(block_index)
+                if selected:
+                    candidates = [selected] + [c for c in candidates if c.poi_id != selected.poi_id]
+                candidate_limit = max(5, self._settings.agentic_day_selection_max_candidates)
+                poi_plan_blocks.append(POIPlanBlock(
+                    day_number=day_skeleton.day_number,
+                    block_index=block_index,
+                    block_theme=block.theme or "",
+                    block_type=block.block_type,
+                    candidates=candidates[:candidate_limit],
+                ))
+
+            blocks_with_poi: list[BlockWithPOI] = []
+            for block_index, skeleton_block in enumerate(day_skeleton.blocks):
+                selected_poi = None
+                if skeleton_block.block_type in self.BLOCK_TYPES_NEEDING_POIS:
+                    selected_poi = selected_by_block.get(block_index)
+
+                blocks_with_poi.append(BlockWithPOI(
+                    original_index=block_index,
+                    block_type=skeleton_block.block_type,
+                    start_time=skeleton_block.start_time,
+                    end_time=skeleton_block.end_time,
+                    theme=skeleton_block.theme,
+                    poi=selected_poi,
+                    is_reorderable=self._is_block_reorderable(skeleton_block.block_type),
+                ))
+
+            use_llm_route = (
+                self._settings.use_llm_for_route_optimization
+                and self._settings.agentic_use_llm_for_route_optimization
+            )
+            if use_llm_route:
+                optimized_blocks = await self._optimize_day_route_llm(
+                    blocks_with_poi,
+                    deadline_ts=deadline_ts,
+                )
+            else:
+                optimized_blocks = self._optimize_day_route(blocks_with_poi)
+
+            day_anchor_lat = None
+            day_anchor_lon = None
+            if previous_day_last_poi and previous_day_last_poi.lat is not None and previous_day_last_poi.lon is not None:
+                day_anchor_lat = previous_day_last_poi.lat
+                day_anchor_lon = previous_day_last_poi.lon
+            elif trip_spec.hotel_lat is not None and trip_spec.hotel_lon is not None:
+                day_anchor_lat = trip_spec.hotel_lat
+                day_anchor_lon = trip_spec.hotel_lon
+            elif trip_spec.city_center_lat is not None and trip_spec.city_center_lon is not None:
+                day_anchor_lat = trip_spec.city_center_lat
+                day_anchor_lon = trip_spec.city_center_lon
+
+            candidates_by_block_keyed = {
+                (day_skeleton.day_number, block_index): candidates
+                for block_index, candidates in candidates_by_block.items()
+            }
+
+            optimized_blocks = self._repair_long_hops(
+                blocks=optimized_blocks,
+                day_number=day_skeleton.day_number,
+                day_skeleton=day_skeleton,
+                candidates_by_block=candidates_by_block_keyed,
+                used_poi_ids=trip_used_poi_ids,
+                preference_profile=preference_profile,
+                day_anchor_lat=day_anchor_lat,
+                day_anchor_lon=day_anchor_lon,
+                day_center_lat=trip_spec.city_center_lat,
+                day_center_lon=trip_spec.city_center_lon,
+            )
+
+            itinerary_blocks = []
+            prev_poi = None
+
+            for block_with_poi in optimized_blocks:
+                travel_time = 0
+                travel_distance = None
+                travel_polyline = None
+
+                if block_with_poi.poi is not None:
+                    origin = TravelLocation.from_poi(prev_poi)
+                    destination = TravelLocation.from_poi(block_with_poi.poi)
+                    travel_result = await self.travel_time_provider.estimate_travel(
+                        origin,
+                        destination,
+                    )
+                    travel_time = travel_result.duration_minutes
+                    travel_distance = travel_result.distance_meters
+                    travel_polyline = travel_result.polyline
+                    prev_poi = block_with_poi.poi
+
+                notes = None
+                if block_with_poi.block_type == BlockType.REST:
+                    notes = block_with_poi.theme or "Rest at hotel"
+                elif block_with_poi.block_type == BlockType.TRAVEL:
+                    notes = block_with_poi.theme or "Travel time"
+
+                geo_suboptimal = False
+                if (
+                    self._settings.enable_travel_hop_limit
+                    and travel_time > self._settings.max_travel_minutes_per_hop
+                    and block_with_poi.poi is not None
+                ):
+                    geo_suboptimal = True
+
+                itinerary_blocks.append(ItineraryBlock(
+                    block_type=block_with_poi.block_type,
+                    start_time=block_with_poi.start_time,
+                    end_time=block_with_poi.end_time,
+                    poi=block_with_poi.poi,
+                    travel_time_from_prev=travel_time,
+                    travel_distance_meters=travel_distance,
+                    travel_polyline=travel_polyline,
+                    notes=notes,
+                    geo_suboptimal=geo_suboptimal,
+                ))
+
+            itinerary_day = ItineraryDay(
+                day_number=day_skeleton.day_number,
+                date=day_skeleton.date,
+                theme=day_skeleton.theme,
+                blocks=itinerary_blocks,
+            )
+            itinerary_days.append(itinerary_day)
+
+            for block in reversed(itinerary_blocks):
+                if block.poi and block.poi.lat is not None and block.poi.lon is not None:
+                    previous_day_last_poi = block.poi
+                    break
+
+        # 8. Store in database
+        created_at = datetime.utcnow()
+        itinerary_json = [day.model_dump(mode='json') for day in itinerary_days]
+        poi_plan_json = [block.model_dump(mode='json') for block in poi_plan_blocks]
+
+        result = await db.execute(
+            select(ItineraryModel).where(ItineraryModel.trip_id == trip_id)
+        )
+        itinerary_model = result.scalars().first()
+
+        if not itinerary_model:
+            itinerary_model = ItineraryModel(
+                trip_id=trip_id,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+            db.add(itinerary_model)
+
+        itinerary_model.poi_plan = poi_plan_json
+        itinerary_model.poi_plan_created_at = created_at
+        itinerary_model.days = itinerary_json
+        itinerary_model.itinerary_created_at = created_at
+        itinerary_model.updated_at = created_at
+
+        await db.commit()
+        await db.refresh(itinerary_model)
+
+        return ItineraryResponse(
+            trip_id=trip_id,
+            days=itinerary_days,
+            created_at=created_at.isoformat() + "Z",
+        )
+
     async def get_itinerary(
         self,
         trip_id: UUID,
@@ -1045,7 +2073,25 @@ Return JSON only:
             )
 
         except Exception as e:
+            import traceback
             logger.warning(
                 f"Smart routing failed for trip {trip_id}, falling back to classic: {e}"
             )
-            return await self.generate_itinerary(trip_id, db)
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+
+            # Fallback to classic pipeline: generate POI plan first, then itinerary
+            from src.application.poi_planner import POIPlanner
+
+            poi_planner = POIPlanner()
+
+            # Check if POI plan exists, generate if not
+            poi_plan = await poi_planner.get_poi_plan(trip_id, db)
+            if not poi_plan:
+                logger.info(f"Generating POI plan for fallback (trip {trip_id})")
+                poi_plan = await poi_planner.generate_poi_plan(
+                    trip_id,
+                    db,
+                    preference_profile=preference_profile,
+                )
+
+            return await self.generate_itinerary(trip_id, db, preference_profile=preference_profile)

@@ -608,6 +608,7 @@ class GooglePlacesPOIProvider(POIProvider):
             "language": self.language,
         }
 
+        print(f"🌐 Google Places Text Search API: query='{query}'")
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.get(self.base_url, params=params)
@@ -617,8 +618,10 @@ class GooglePlacesPOIProvider(POIProvider):
             status = data.get("status", "UNKNOWN")
             if status != "OK":
                 if status == "ZERO_RESULTS":
+                    print(f"⚪ Google Places Text Search API: No results for query='{query}'")
                     logger.info(f"No results from Google Places for query: {query}")
                     return []
+                print(f"❌ Google Places Text Search API: Status {status} for query='{query}'")
                 logger.warning(f"Google Places API returned status: {status}")
                 return []
 
@@ -628,16 +631,20 @@ class GooglePlacesPOIProvider(POIProvider):
                 if parsed:
                     results.append(parsed)
 
+            print(f"✅ Google Places Text Search API: {len(results)} places for query='{query}'")
             logger.info(f"Fetched {len(results)} places from Google Places API")
             return results
 
         except httpx.TimeoutException:
+            print(f"❌ Google Places Text Search API: Timeout ({self.timeout_seconds}s) for query='{query}'")
             logger.warning(f"Google Places API timeout after {self.timeout_seconds}s")
             return []
         except httpx.HTTPStatusError as e:
+            print(f"❌ Google Places Text Search API: HTTP {e.response.status_code} for query='{query}'")
             logger.warning(f"Google Places API HTTP error: {e.response.status_code}")
             return []
         except Exception as e:
+            print(f"❌ Google Places Text Search API: {type(e).__name__}: {e} for query='{query}'")
             logger.error(f"Unexpected error fetching from Google Places: {e}")
             return []
 

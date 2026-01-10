@@ -97,9 +97,10 @@ final class RouteBuildingViewModel: ObservableObject {
 
     private let subtitles = [
         "Анализируем ваши интересы",
-        "Подбираем лучшие районы",
+        "Подбираем персонализированные места",
+        "Группируем POI по районам",
         "Оптимизируем маршрут",
-        "Добавляем локальные места"
+        "Проверяем расписание работы"
     ]
 
     private let finalizingSubtitle = "Завершаем построение маршрута…"
@@ -163,10 +164,10 @@ final class RouteBuildingViewModel: ObservableObject {
     // MARK: - Private Methods
 
     private func fetchRoute() async {
-        print("📡 fetchRoute: calling fast-draft API for trip \(tripId)")
+        print("📡 fetchRoute: calling full plan API for trip \(tripId)")
         do {
-            // Use fast-draft endpoint for p95 < 20s response
-            let itinerary = try await apiClient.generateFastDraft(tripId: tripId)
+            // Use full plan endpoint with agentic POI Curator + Route Engineer for maximum personalization
+            let itinerary = try await apiClient.generatePlan(tripId: tripId)
             print("✅ fetchRoute: received itinerary with \(itinerary.days.count) days")
             self.itineraryResult = itinerary
 

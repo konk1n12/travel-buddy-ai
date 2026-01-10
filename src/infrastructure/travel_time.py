@@ -242,6 +242,7 @@ class GoogleMapsTravelTimeProvider(TravelTimeProvider):
             "computeAlternativeRoutes": False,
         }
 
+        print(f"🌐 Google Routes API: {origin.address or f'({origin.lat}, {origin.lon})'} → {destination.address or f'({destination.lat}, {destination.lon})'} ({mode})")
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(
@@ -250,15 +251,20 @@ class GoogleMapsTravelTimeProvider(TravelTimeProvider):
                     json=body,
                 )
                 response.raise_for_status()
-                return response.json()
+                result = response.json()
+                print(f"✅ Google Routes API: Success")
+                return result
 
         except httpx.TimeoutException:
+            print(f"❌ Google Routes API: Timeout ({self.timeout_seconds}s)")
             logger.warning(f"Google Routes API timeout after {self.timeout_seconds}s")
             return None
         except httpx.HTTPStatusError as e:
+            print(f"❌ Google Routes API: HTTP {e.response.status_code}")
             logger.warning(f"Google Routes API HTTP error: {e.response.status_code}")
             return None
         except Exception as e:
+            print(f"❌ Google Routes API: {type(e).__name__}: {e}")
             logger.error(f"Unexpected error calling Google Routes API: {e}")
             return None
 

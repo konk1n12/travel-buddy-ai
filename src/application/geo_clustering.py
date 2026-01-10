@@ -268,6 +268,45 @@ class GeoClusterer:
             logger.warning("No POIs with valid coordinates for clustering")
             return ClusteringResult(districts={})
 
+        # Determine city center if not provided (use median of all POI coordinates)
+        if city_center_lat is None or city_center_lon is None:
+            lats = sorted([p.lat for p in valid_pois])
+            lons = sorted([p.lon for p in valid_pois])
+            city_center_lat = lats[len(lats) // 2]
+            city_center_lon = lons[len(lons) // 2]
+            logger.info(f"City center estimated: ({city_center_lat:.4f}, {city_center_lon:.4f})")
+
+        # Filter out POIs that are too far from city center (e.g., far suburbs like Peterhof)
+        # Import max_radius from settings
+        from src.config import settings
+        max_radius_km = settings.max_poi_radius_km
+
+        filtered_pois = []
+        excluded_count = 0
+        for poi in valid_pois:
+            distance_from_center = haversine_distance_km(
+                poi.lat, poi.lon, city_center_lat, city_center_lon
+            )
+            if distance_from_center <= max_radius_km:
+                filtered_pois.append(poi)
+            else:
+                excluded_count += 1
+                logger.debug(
+                    f"Excluded POI '{poi.name}' ({distance_from_center:.1f}km from center, "
+                    f"max={max_radius_km}km)"
+                )
+
+        if excluded_count > 0:
+            logger.info(
+                f"Excluded {excluded_count} POIs beyond {max_radius_km}km from city center "
+                f"({len(filtered_pois)}/{len(valid_pois)} remaining)"
+            )
+
+        valid_pois = filtered_pois
+        if not valid_pois:
+            logger.warning("No POIs remaining after distance filtering")
+            return ClusteringResult(districts={})
+
         logger.info(f"Clustering {len(valid_pois)} POIs with cell_size={self.cell_size_km}km")
 
         # Step 1: Assign POIs to grid cells

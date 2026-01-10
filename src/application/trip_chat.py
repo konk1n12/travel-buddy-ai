@@ -183,6 +183,14 @@ class TripChatAssistant:
             # Get the update object from the LLM response
             updates = llm_response.trip_updates
 
+            # Merge interests instead of replacing
+            if updates.interests:
+                existing_interests = set(current_trip.interests or [])
+                new_interests = set(updates.interests)
+                merged_interests = list(existing_interests | new_interests)
+                updates.interests = merged_interests
+                print(f"  🔀 Merged interests: {existing_interests} + {new_interests} → {merged_interests}")
+
             # Merge additional_preferences instead of replacing
             if updates.additional_preferences:
                 merged_prefs = {
@@ -190,6 +198,7 @@ class TripChatAssistant:
                     **updates.additional_preferences,
                 }
                 updates.additional_preferences = merged_prefs
+                print(f"  🔀 Merged additional_preferences: {len(merged_prefs)} items")
 
             # Merge structured_preferences instead of replacing
             if updates.structured_preferences:
@@ -198,6 +207,7 @@ class TripChatAssistant:
                 existing_structured_prefs = getattr(current_trip, 'structured_preferences', []) or []
                 merged_structured_prefs = existing_structured_prefs + updates.structured_preferences
                 updates.structured_preferences = merged_structured_prefs
+                print(f"  🔀 Merged structured_preferences: {len(existing_structured_prefs)} + {len(updates.structured_preferences)} → {len(merged_structured_prefs)}")
 
             update_request = self._safe_apply_trip_updates(updates)
             

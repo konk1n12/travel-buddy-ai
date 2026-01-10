@@ -54,7 +54,10 @@
       "Bash(/usr/local/bin/docker compose ps)",
       "Bash(/usr/local/bin/docker compose logs:*)",
       "Bash(/usr/local/bin/docker exec:*)",
-      "Bash(/usr/local/bin/docker compose restart api)"
+      "Bash(/usr/local/bin/docker compose restart api)",
+      "Bash(git config:*)",
+      "Bash(git push:*)",
+      "Bash(git fetch origin main)"
     ]
   }
 }
