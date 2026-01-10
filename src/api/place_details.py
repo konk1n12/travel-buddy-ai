@@ -4,7 +4,7 @@ Place details endpoints backed by Google Places API.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,4 +93,4 @@ async def get_place_photo(photo_reference: str, max_width: int = Query(default=1
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    return StreamingResponse(content=content, media_type="image/jpeg")
+    return Response(content=content, media_type="image/jpeg")

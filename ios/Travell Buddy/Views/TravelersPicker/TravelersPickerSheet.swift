@@ -15,78 +15,80 @@ struct TravelersPickerSheet: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(.systemBackground)
+                LinearGradient(
+                    colors: [
+                        TravelersPickerStyle.Colors.backgroundTop,
+                        TravelersPickerStyle.Colors.backgroundBottom
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+
+                RadialGradient(
+                    colors: [
+                        TravelersPickerStyle.Colors.smoke.opacity(0.35),
+                        Color.clear
+                    ],
+                    center: .top,
+                    startRadius: 20,
+                    endRadius: 420
+                )
+                .ignoresSafeArea()
+
+                Image("noise")
+                    .resizable(resizingMode: .tile)
+                    .opacity(0.03)
+                    .blendMode(.softLight)
                     .ignoresSafeArea()
                 
-                VStack(spacing: 0) {
-                    // Заголовок
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Количество путешественников")
-                            .font(.system(size: 24, weight: .bold, design: .rounded))
-                            .foregroundColor(Color(.label))
-                        
-                        Text("Выберите количество взрослых и детей")
-                            .font(.system(size: 16))
-                            .foregroundColor(Color(.secondaryLabel))
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 20)
-                    .padding(.bottom, 16)
-                    
-                    Divider()
-                    
-                    ScrollView {
-                        VStack(spacing: 24) {
-                            // Взрослые
-                            TravelerCountRow(
-                                title: "Взрослые",
-                                subtitle: "От 18 лет",
-                                icon: "person.fill",
-                                iconColor: Color(red: 0.6, green: 0.4, blue: 0.8),
-                                count: $adultsCount,
-                                minValue: 1
-                            )
-                            
-                            Divider()
-                            
-                            // Дети
-                            TravelerCountRow(
-                                title: "Дети",
-                                subtitle: "До 18 лет",
-                                icon: "figure.child",
-                                iconColor: Color(red: 1.0, green: 0.65, blue: 0.40),
-                                count: $childrenCount,
-                                minValue: 0
-                            )
-                            
-                            // Итого
-                            VStack(spacing: 8) {
-                                Divider()
-                                
-                                HStack {
-                                    Text("Всего путешественников")
-                                        .font(.system(size: 17, weight: .semibold, design: .rounded))
-                                        .foregroundColor(Color(.label))
-                                    
-                                    Spacer()
-                                    
-                                    Text("\(adultsCount + childrenCount)")
-                                        .font(.system(size: 24, weight: .bold, design: .rounded))
-                                        .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
-                                }
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 16)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                        .fill(Color(.systemGray6))
-                                )
-                            }
-                            .padding(.top, 8)
+                ScrollView {
+                    VStack(spacing: 16) {
+                        // Заголовок
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Количество путешественников")
+                                .font(.system(size: 24, weight: .bold, design: .rounded))
+                                .foregroundColor(TravelersPickerStyle.Colors.primaryText)
+
+                            Text("Выберите количество взрослых и детей")
+                                .font(.system(size: 16))
+                                .foregroundColor(TravelersPickerStyle.Colors.secondaryText)
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 24)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 20)
+
+                        Divider()
+                            .overlay(Color.white.opacity(0.08))
+
+                        // Взрослые
+                        TravelerCountRow(
+                            title: "Взрослые",
+                            subtitle: "От 18 лет",
+                            icon: "person.fill",
+                            iconColor: Color.travelBuddyOrange,
+                            count: $adultsCount,
+                            minValue: 1
+                        )
+
+                        Divider()
+                            .overlay(Color.white.opacity(0.08))
+
+                        // Дети
+                        TravelerCountRow(
+                            title: "Дети",
+                            subtitle: "До 18 лет",
+                            icon: "figure.child",
+                            iconColor: Color.travelBuddyOrangeLight,
+                            count: $childrenCount,
+                            minValue: 0
+                        )
                     }
+                    .padding(.horizontal, TravelersPickerStyle.Layout.horizontalPadding)
+                    .padding(.vertical, 16)
+                    .padding(.bottom, totalSummaryHeight + 12)
+                }
+                .safeAreaInset(edge: .bottom) {
+                    totalSummary
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -95,7 +97,7 @@ struct TravelersPickerSheet: View {
                     Button("Отмена") {
                         isPresented = false
                     }
-                    .foregroundColor(Color(.label))
+                    .foregroundColor(TravelersPickerStyle.Colors.primaryText)
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -103,10 +105,62 @@ struct TravelersPickerSheet: View {
                         isPresented = false
                     }
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(Color(red: 0.2, green: 0.6, blue: 1.0))
+                    .foregroundColor(TravelersPickerStyle.Colors.accent)
                 }
             }
+            .toolbarBackground(TravelersPickerStyle.Colors.backgroundTop, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
         }
-        .presentationDetents([.medium, .large])
+    }
+
+    private var totalSummaryHeight: CGFloat {
+        88
+    }
+
+    private var totalSummary: some View {
+        VStack(spacing: 12) {
+            Divider()
+                .overlay(Color.white.opacity(0.08))
+
+            HStack {
+                Text("Всего путешественников")
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    .foregroundColor(TravelersPickerStyle.Colors.primaryText)
+
+                Spacer()
+
+                Text("\(adultsCount + childrenCount)")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundColor(TravelersPickerStyle.Colors.accent)
+            }
+            .padding(.horizontal, TravelersPickerStyle.Layout.horizontalPadding)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: TravelersPickerStyle.Radius.card, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: TravelersPickerStyle.Radius.card, style: .continuous)
+                            .fill(TravelersPickerStyle.Colors.cardTint)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: TravelersPickerStyle.Radius.card, style: .continuous)
+                            .stroke(TravelersPickerStyle.Colors.cardStroke, lineWidth: 1)
+                    )
+            )
+        }
+        .padding(.horizontal, TravelersPickerStyle.Layout.horizontalPadding)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
+        .background(
+            LinearGradient(
+                colors: [
+                    TravelersPickerStyle.Colors.backgroundBottom.opacity(0.0),
+                    TravelersPickerStyle.Colors.backgroundBottom.opacity(0.9)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+        )
     }
 }

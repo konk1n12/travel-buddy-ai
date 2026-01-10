@@ -4,12 +4,12 @@ These are separate from domain models to maintain clean architecture.
 """
 from sqlalchemy import String, Integer, DateTime, JSON, Date, Float, Enum as SQLEnum, UniqueConstraint, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, date
 import uuid
 from typing import Optional, Any
 
 from src.infrastructure.database import Base
+from src.infrastructure.db_types import GUID
 from src.domain.models import PaceLevel, BudgetLevel
 
 
@@ -17,7 +17,7 @@ class TripModel(Base):
     """Database model for Trip (stores TripSpec)."""
     __tablename__ = "trips"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     city: Mapped[str] = mapped_column(String, nullable=False)
     city_center_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     city_center_lon: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -26,7 +26,7 @@ class TripModel(Base):
     num_travelers: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     # Ownership - a trip belongs to either a user or a guest device
-    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(GUID(), nullable=True, index=True)
     device_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     is_legacy_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
@@ -54,7 +54,7 @@ class POIModel(Base):
         UniqueConstraint('external_source', 'external_id', name='uq_pois_external_source_id'),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, nullable=False)
     city: Mapped[str] = mapped_column(String, nullable=False)
     category: Mapped[str] = mapped_column(String, nullable=False)
@@ -86,8 +86,8 @@ class ItineraryModel(Base):
     """Database model for storing generated itineraries."""
     __tablename__ = "itineraries"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    trip_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True, unique=True)
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    trip_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False, index=True, unique=True)
 
     # Macro plan skeleton (list of DaySkeleton) - stored as JSON
     macro_plan: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)

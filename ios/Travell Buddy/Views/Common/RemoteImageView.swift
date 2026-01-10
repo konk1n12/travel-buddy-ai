@@ -70,7 +70,7 @@ struct RemoteImageView: View {
                     .resizable()
                     .scaledToFill()
             } else {
-                Color.clear
+                Color.black.opacity(0.2)
             }
         }
         .onAppear {

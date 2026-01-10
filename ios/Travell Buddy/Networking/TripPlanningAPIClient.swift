@@ -107,8 +107,14 @@ final class TripPlanningAPIClient: TripPlanningAPIClientProtocol {
     func generateFastDraft(tripId: UUID) async throws -> ItineraryResponseDTO {
         print("⚡ Generating fast draft: \(tripId)")
 
+        // Use a longer timeout for fast-draft (LLM + POI fetching can exceed default 30s).
+        let fastDraftRequestBuilder = RequestBuilder(
+            baseURL: AppConfig.baseURL,
+            timeout: AppConfig.fastDraftTimeout
+        )
+
         // Build request
-        let urlRequest = try requestBuilder.buildRequest(
+        let urlRequest = try fastDraftRequestBuilder.buildRequest(
             path: "trips/\(tripId.uuidString.lowercased())/fast-draft",
             method: .post
         )

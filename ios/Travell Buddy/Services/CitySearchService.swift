@@ -127,11 +127,18 @@ final class CitySearchService: NSObject, ObservableObject {
         completer.queryFragment = trimmed
     }
 
-    /// Resolve a search result to get full coordinates
+    /// Resolve a search result to get full coordinates and clean city name
     func resolveCity(_ result: CitySearchResult) async -> CitySearchResult? {
-        // If we already have coordinates, return as is
+        // If we already have coordinates, still try to clean the name
         if result.coordinate != nil {
-            return result
+            // Extract clean city name (first part before comma if needed)
+            let cleanName = extractCleanCityName(from: result.name)
+            return CitySearchResult(
+                name: cleanName,
+                country: result.country,
+                subtitle: result.subtitle,
+                coordinate: result.coordinate
+            )
         }
 
         // Use MKLocalSearch to get coordinates
@@ -145,14 +152,21 @@ final class CitySearchService: NSObject, ObservableObject {
             let response = try await search.start()
 
             guard let mapItem = response.mapItems.first else {
-                return result
+                // Fallback: extract clean name from original
+                let cleanName = extractCleanCityName(from: result.name)
+                return CitySearchResult(
+                    name: cleanName,
+                    country: result.country,
+                    subtitle: result.subtitle,
+                    coordinate: result.coordinate
+                )
             }
 
             let placemark = mapItem.placemark
             let coordinate = placemark.coordinate
 
-            // Extract city and country
-            let cityName = placemark.locality ?? placemark.name ?? result.name
+            // Extract city and country - prefer locality for clean city name
+            let cityName = placemark.locality ?? extractCleanCityName(from: placemark.name ?? result.name)
             let country = placemark.country ?? result.country
 
             return CitySearchResult(
@@ -163,8 +177,23 @@ final class CitySearchService: NSObject, ObservableObject {
             )
         } catch {
             print("Failed to resolve city: \(error)")
-            return result
+            // Return with cleaned name even on error
+            let cleanName = extractCleanCityName(from: result.name)
+            return CitySearchResult(
+                name: cleanName,
+                country: result.country,
+                subtitle: result.subtitle,
+                coordinate: result.coordinate
+            )
         }
+    }
+
+    /// Extract clean city name (first part before comma)
+    private func extractCleanCityName(from name: String) -> String {
+        // "Istanbul, Istanbul, Turkey" -> "Istanbul"
+        // "Стамбул, Стамбул, Турция" -> "Стамбул"
+        let components = name.components(separatedBy: ",")
+        return components.first?.trimmingCharacters(in: .whitespaces) ?? name
     }
 
     /// Resolve an MKLocalSearchCompletion to get coordinates
@@ -183,8 +212,8 @@ final class CitySearchService: NSObject, ObservableObject {
 
             let placemark = mapItem.placemark
 
-            // Extract city name - prefer locality, then name
-            let cityName = placemark.locality ?? placemark.name ?? completion.title
+            // Extract city name - prefer locality for clean name, fallback to cleaned title
+            let cityName = placemark.locality ?? extractCleanCityName(from: placemark.name ?? completion.title)
             let country = placemark.country ?? ""
 
             return CitySearchResult(

@@ -9,6 +9,7 @@ import Foundation
 
 final class TripPlanViewModel: ObservableObject {
     enum TripPlanTab {
+        case overview
         case route
         case map
     }

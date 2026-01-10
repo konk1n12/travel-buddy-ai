@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from src.config import settings
+from src.infrastructure.database import init_db
 from src.api.health import router as health_router
 from src.api.trips import router as trips_router
 from src.api.trip_chat import router as trip_chat_router
@@ -26,6 +27,9 @@ async def lifespan(app: FastAPI):
     # Startup
     print(f"Starting Trip Planning API on {settings.host}:{settings.port}")
     print(f"Debug mode: {settings.debug}")
+    if settings.auto_init_db:
+        print("Auto-init DB: creating tables if missing")
+        await init_db()
 
     yield
 

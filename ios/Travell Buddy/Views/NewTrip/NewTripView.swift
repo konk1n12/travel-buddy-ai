@@ -31,6 +31,7 @@ struct NewTripView: View {
     @State private var adultsCount: Int = 1
     @State private var childrenCount: Int = 0
     @State private var showTravelersPicker: Bool = false
+    @State private var travelersSheetDetent: PresentationDetent = .height(520)
     @State private var selectedInterests: Set<String> = ["Гастро", "Искусство"]
 
     // Route building state - using Identifiable item for fullScreenCover
@@ -38,6 +39,7 @@ struct NewTripView: View {
     @State private var pendingRouteBuildingData: RouteBuildingData?
     @State private var showPaywall: Bool = false
     @State private var paywallError: String?
+    @State private var pendingTripPlanPresentation: Bool = false
     
     // Форматированная строка путешественников
     private var travelersText: String {
@@ -64,7 +66,7 @@ struct NewTripView: View {
     @State private var messageText: String = ""
     @FocusState private var isTextFieldFocused: Bool
     @State private var isShowingTripPlan: Bool = false
-    @State private var tripPlanViewModel: TripPlanViewModel?
+    @StateObject private var tripPlanViewModel = TripPlanViewModel()
     @State private var isGeneratingPlan: Bool = false
     @State private var planGenerationError: String?
     @State private var showErrorAlert: Bool = false
@@ -74,6 +76,9 @@ struct NewTripView: View {
     private let mutedWarmGray = Color(red: 0.70, green: 0.67, blue: 0.63)
     private let glassFill = Color.white.opacity(0.08)
     private let glassBorder = Color.white.opacity(0.14)
+    private var isPreview: Bool {
+        ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
 
     let popularCities = ["Париж", "Бали", "Нью-Йорк"]
 
@@ -154,7 +159,15 @@ struct NewTripView: View {
                 .padding(.bottom, 28)
             }
         }
-        .background(tripPlanNavigationLink)
+        .fullScreenCover(isPresented: $isShowingTripPlan) {
+            if isPreview {
+                EmptyView()
+            } else {
+                NavigationStack {
+                    TripPlanView(viewModel: tripPlanViewModel)
+                }
+            }
+        }
         .background(NavigationPopEnabler())
         .navigationBarHidden(true)
         .onAppear {
@@ -166,43 +179,50 @@ struct NewTripView: View {
                 endDate = planning.endDate
             }
         }
-        .fullScreenCover(item: $routeBuildingData) { data in
+        .fullScreenCover(item: $routeBuildingData, onDismiss: {
+            guard pendingTripPlanPresentation else { return }
+            pendingTripPlanPresentation = false
+            DispatchQueue.main.async {
+                isShowingTripPlan = true
+            }
+        }) { data in
             RouteBuildingView(
                 cityName: data.cityName,
                 cityCoordinate: data.coordinate,
                 tripId: data.tripId,
                 onRouteReady: { itinerary in
-                    // Закрываем экран загрузки
-                    routeBuildingData = nil
+                    Task { @MainActor in
+                        // Создаём TripPlan из itinerary
+                        tripPlanViewModel.plan = itinerary.toTripPlan(
+                            destinationCity: data.cityName,
+                            budget: selectedBudget,
+                            interests: Array(selectedInterests).sorted(),
+                            travelersCount: adultsCount + childrenCount,
+                            expectedStartDate: startDate,
+                            expectedEndDate: endDate
+                        )
 
-                    // Создаём TripPlan из itinerary
-                    if tripPlanViewModel == nil {
-                        tripPlanViewModel = TripPlanViewModel()
+                        // Показываем экран плана после закрытия cover
+                        pendingTripPlanPresentation = true
+                        // Закрываем экран загрузки
+                        routeBuildingData = nil
                     }
-
-                    tripPlanViewModel?.plan = itinerary.toTripPlan(
-                        destinationCity: data.cityName,
-                        budget: selectedBudget,
-                        interests: Array(selectedInterests).sorted(),
-                        travelersCount: adultsCount + childrenCount,
-                        expectedStartDate: startDate,
-                        expectedEndDate: endDate
-                    )
-
-                    // Показываем экран плана
-                    isShowingTripPlan = true
                 },
                 onRetry: {
-                    // Закрываем и показываем ошибку
-                    routeBuildingData = nil
-                    planGenerationError = "Не удалось сгенерировать маршрут. Попробуйте ещё раз."
-                    showErrorAlert = true
+                    Task { @MainActor in
+                        // Закрываем и показываем ошибку
+                        routeBuildingData = nil
+                        planGenerationError = "Не удалось сгенерировать маршрут. Попробуйте ещё раз."
+                        showErrorAlert = true
+                    }
                 },
                 onPaywallRequired: {
-                    pendingRouteBuildingData = data
-                    routeBuildingData = nil
-                    paywallError = "Второе построение доступно после входа"
-                    showPaywall = true
+                    Task { @MainActor in
+                        pendingRouteBuildingData = data
+                        routeBuildingData = nil
+                        paywallError = "Второе построение доступно после входа"
+                        showPaywall = true
+                    }
                 }
             )
         }
@@ -218,19 +238,6 @@ struct NewTripView: View {
                 }
             )
         }
-    }
-
-    private var tripPlanNavigationLink: some View {
-        NavigationLink(isActive: $isShowingTripPlan) {
-            if let viewModel = tripPlanViewModel {
-                TripPlanView(viewModel: viewModel)
-            } else {
-                EmptyView()
-            }
-        } label: {
-            EmptyView()
-        }
-        .hidden()
     }
 
     // MARK: Header
@@ -253,8 +260,8 @@ struct NewTripView: View {
                 .foregroundColor(warmWhite)
         )
         .padding(.top, 6)
-    }
-    
+}
+
     // MARK: City Section
 
     private var citySection: some View {
@@ -323,6 +330,8 @@ struct NewTripView: View {
                 childrenCount: $childrenCount,
                 isPresented: $showTravelersPicker
             )
+            .presentationDetents([.height(520), .large], selection: $travelersSheetDetent)
+            .presentationDragIndicator(.visible)
         }
     }
     
@@ -670,10 +679,11 @@ struct NewTripView: View {
 
     private var planTripButton: some View {
         Button(action: {
+            print("🟢 PlanTrip button tapped")
             openTripPlan()
         }) {
             HStack(spacing: 12) {
-                if tripPlanViewModel?.isLoading == true {
+                if tripPlanViewModel.isLoading {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
                         .scaleEffect(0.9)
@@ -683,7 +693,7 @@ struct NewTripView: View {
                         .foregroundColor(.white)
                 }
 
-                Text(tripPlanViewModel?.isLoading == true ? "Генерирую маршрут..." : "Сгенерировать маршрут")
+                Text(tripPlanViewModel.isLoading ? "Генерирую маршрут..." : "Сгенерировать маршрут")
                     .font(.system(size: 18, weight: .semibold, design: .rounded))
                     .foregroundColor(.white)
             }
@@ -696,8 +706,8 @@ struct NewTripView: View {
             .shadow(color: Color.travelBuddyOrange.opacity(0.35), radius: 12, x: 0, y: 6)
         }
         .buttonStyle(.plain)
-        .disabled(tripPlanViewModel?.isLoading == true)
-        .opacity(tripPlanViewModel?.isLoading == true ? 0.7 : 1.0)
+        .disabled(tripPlanViewModel.isLoading)
+        .opacity(tripPlanViewModel.isLoading ? 0.7 : 1.0)
         .alert("Ошибка создания маршрута", isPresented: $showErrorAlert) {
             Button("Повторить") {
                 retryPlanGeneration()
@@ -712,6 +722,7 @@ struct NewTripView: View {
 
     private func openTripPlan() {
         print("🚀 openTripPlan called for city: \(selectedCity)")
+        print("🧭 Params: start=\(startDate) end=\(endDate) travelers=\(adultsCount + childrenCount) budget=\(selectedBudget) interests=\(Array(selectedInterests).sorted())")
 
         // Geocode city to get coordinates
         let geocoder = CLGeocoder()
@@ -776,6 +787,12 @@ struct NewTripView: View {
                         )
                     }
                 } catch {
+                    print("❌ createTrip failed: \(error)")
+                    if let apiError = error as? APIError {
+                        print("❌ APIError: \(apiError) | \(apiError.errorDescription ?? "no description")")
+                    } else {
+                        print("❌ Error type: \(type(of: error))")
+                    }
                     await MainActor.run {
                         self.planGenerationError = "Не удалось создать поездку: \(error.localizedDescription)"
                         self.showErrorAlert = true
@@ -817,20 +834,14 @@ struct NewTripView: View {
     }
 
     private func retryPlanGeneration() {
-        guard let viewModel = tripPlanViewModel else {
-            // If no viewModel exists, call openTripPlan to create one
-            openTripPlan()
-            return
-        }
-
         // Retry using stored parameters
         Task {
-            await viewModel.retryLastGeneration()
+            await tripPlanViewModel.retryLastGeneration()
 
             await MainActor.run {
-                if viewModel.plan != nil {
+                if tripPlanViewModel.plan != nil {
                     isShowingTripPlan = true
-                } else if let error = viewModel.errorMessage {
+                } else if let error = tripPlanViewModel.errorMessage {
                     planGenerationError = error
                     showErrorAlert = true
                 }

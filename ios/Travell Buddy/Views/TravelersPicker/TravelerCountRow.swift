@@ -17,33 +17,39 @@ struct TravelerCountRow: View {
     
     var body: some View {
         HStack(spacing: 16) {
-            // Иконка
-            ZStack {
-                Circle()
-                    .fill(iconColor.opacity(0.15))
-                    .frame(width: 50, height: 50)
-                
-                Image(systemName: icon)
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundColor(iconColor)
+            HStack(spacing: 12) {
+                // Иконка
+                ZStack {
+                    Circle()
+                        .fill(TravelersPickerStyle.Colors.badgeFillBase)
+                        .frame(width: TravelersPickerStyle.Layout.iconSize, height: TravelersPickerStyle.Layout.iconSize)
+                        .overlay(
+                            Circle()
+                                .stroke(TravelersPickerStyle.Colors.badgeStroke, lineWidth: 1)
+                        )
+
+                    Image(systemName: icon)
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundColor(iconColor)
+                }
+
+                // Текст
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .foregroundColor(TravelersPickerStyle.Colors.primaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+
+                    Text(subtitle)
+                        .font(.system(size: 14))
+                        .foregroundColor(TravelersPickerStyle.Colors.secondaryText)
+                }
             }
-            
-            // Текст
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .foregroundColor(Color(.label))
-                
-                Text(subtitle)
-                    .font(.system(size: 14))
-                    .foregroundColor(Color(.secondaryLabel))
-            }
-            
-            Spacer()
-            
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             // Кнопки +/-
-            HStack(spacing: 16) {
-                // Кнопка минус
+            HStack(spacing: 12) {
                 Button(action: {
                     if count > minValue {
                         withAnimation {
@@ -53,24 +59,26 @@ struct TravelerCountRow: View {
                 }) {
                     ZStack {
                         Circle()
-                            .fill(count > minValue ? Color(.systemGray5) : Color(.systemGray6))
-                            .frame(width: 44, height: 44)
-                        
+                            .fill(count > minValue ? TravelersPickerStyle.Colors.controlFill : TravelersPickerStyle.Colors.controlDisabled)
+                            .frame(width: TravelersPickerStyle.Layout.controlSize, height: TravelersPickerStyle.Layout.controlSize)
+                            .overlay(
+                                Circle()
+                                    .stroke(TravelersPickerStyle.Colors.controlStroke, lineWidth: 1)
+                            )
+
                         Image(systemName: "minus")
                             .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(count > minValue ? Color(.label) : Color(.tertiaryLabel))
+                            .foregroundColor(count > minValue ? TravelersPickerStyle.Colors.primaryText : TravelersPickerStyle.Colors.secondaryText.opacity(0.45))
                     }
                 }
                 .buttonStyle(.plain)
                 .disabled(count <= minValue)
-                
-                // Счётчик
+
                 Text("\(count)")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundColor(Color(.label))
-                    .frame(minWidth: 40)
-                
-                // Кнопка плюс
+                    .foregroundColor(TravelersPickerStyle.Colors.primaryText)
+                    .frame(minWidth: 32, alignment: .center)
+
                 Button(action: {
                     withAnimation {
                         count += 1
@@ -78,9 +86,10 @@ struct TravelerCountRow: View {
                 }) {
                     ZStack {
                         Circle()
-                            .fill(Color(red: 0.2, green: 0.6, blue: 1.0))
-                            .frame(width: 44, height: 44)
-                        
+                            .fill(LinearGradient.travelBuddyPrimary)
+                            .frame(width: TravelersPickerStyle.Layout.controlSize, height: TravelersPickerStyle.Layout.controlSize)
+                            .shadow(color: Color.black.opacity(0.25), radius: 8, x: 0, y: 6)
+
                         Image(systemName: "plus")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundColor(.white)
@@ -88,13 +97,21 @@ struct TravelerCountRow: View {
                 }
                 .buttonStyle(.plain)
             }
+            .frame(width: 152, alignment: .center)
         }
-        .padding(16)
+        .padding(TravelersPickerStyle.Layout.cardPadding)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white)
+            RoundedRectangle(cornerRadius: TravelersPickerStyle.Radius.card, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: TravelersPickerStyle.Radius.card, style: .continuous)
+                        .fill(TravelersPickerStyle.Colors.cardTint)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: TravelersPickerStyle.Radius.card, style: .continuous)
+                        .stroke(TravelersPickerStyle.Colors.cardStroke, lineWidth: 1)
+                )
         )
-        .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+        .shadow(color: TravelersPickerStyle.Colors.cardShadow, radius: 12, x: 0, y: 8)
     }
 }
-

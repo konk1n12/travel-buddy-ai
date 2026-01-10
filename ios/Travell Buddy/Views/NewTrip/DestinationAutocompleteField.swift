@@ -163,16 +163,20 @@ struct DestinationAutocompleteField: View {
     }
 
     private func selectCity(_ result: CitySearchResult) {
-        cityName = result.name
         isShowingSuggestions = false
         isFocused = false
         searchService.clear()
 
-        // Resolve coordinates in background
+        // Resolve coordinates and get clean city name
         Task {
             if let resolved = await searchService.resolveCity(result) {
+                // Use resolved city name (cleaner, from placemark.locality)
+                cityName = resolved.name
                 onCitySelected?(resolved)
             } else {
+                // Fallback: extract just the city name (first part before comma)
+                let cleanName = result.name.components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? result.name
+                cityName = cleanName
                 onCitySelected?(result)
             }
         }

@@ -2,94 +2,107 @@
 //  TripPlanView.swift
 //  Travell Buddy
 //
-//  Renders the detailed day-by-day route following the draft design.
+//  Renders the detailed day-by-day route following the premium dark design.
 //
 
 import SwiftUI
 
 struct TripPlanView: View {
-    @StateObject var viewModel: TripPlanViewModel
+    @ObservedObject var viewModel: TripPlanViewModel
     @State private var isShowingGuide: Bool = false
     @State private var isShowingEditDay: Bool = false
     @State private var isShowingChat: Bool = false
-    @State private var isShowingSummary: Bool = false
     @State private var editViewModel: EditDayViewModel?
     @State private var chatViewModel: ChatViewModel?
     @State private var selectedPlace: Place?
     @State private var showPaywall: Bool = false
     @State private var paywallError: String?
+    @State private var isMapInteracting: Bool = false
+    @Environment(\.dismiss) private var dismiss
+    private let ctaHeight: CGFloat = 72
 
-    init(viewModel: TripPlanViewModel) {
-        _viewModel = StateObject(wrappedValue: viewModel)
-    }
-    
     var body: some View {
         Group {
             if let plan = viewModel.plan {
-                // Show trip plan
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        headerCard(plan: plan)
-                        tabSwitcher
-                        tabContent
-                            .padding(.top, 4)
+                ZStack {
+                    backgroundLayer
+                    ScrollView(showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Маршрут поездки")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.8))
+                            heroSection(plan: plan)
+                            tabSwitcher
+                            summaryStatsRow(summary: plan.summary)
+                            tabContent(plan: plan)
+                        }
+                        .padding(.top, 12)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, ctaHeight + 16)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    .padding(.bottom, 120)
+                    .scrollDisabled(isMapInteracting)
                 }
-                .background(Color(.systemBackground).ignoresSafeArea())
+                .onAppear {
+                    print("📱 TripPlanView appeared with plan for city: \(plan.destinationCity)")
+                    print("📱 Days count: \(plan.days.count)")
+                    print("📱 Photo URL: \(String(describing: photoURL(for: plan.destinationCity)))")
+                    print("📱 Selected tab: \(viewModel.selectedTab)")
+                }
                 .safeAreaInset(edge: .bottom) {
-                    guideCTA
+                    guideCTA(height: ctaHeight)
                 }
                 .background(editDayNavigationLink)
                 .background(guideNavigationLink)
             } else if viewModel.isLoading {
-                // Show loading state
-                VStack(spacing: 20) {
+                VStack(spacing: 16) {
                     ProgressView()
-                        .scaleEffect(1.5)
+                        .scaleEffect(1.4)
                     Text("Генерирую маршрут...")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.white.opacity(0.7))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(backgroundLayer)
+                .onAppear {
+                    print("📱 TripPlanView showing LOADING state")
                 }
             } else if let error = viewModel.errorMessage {
-                // Show error state
-                VStack(spacing: 20) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 48))
+                VStack(spacing: 16) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 44))
                         .foregroundColor(.orange)
                     Text("Ошибка")
                         .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.white)
                     Text(error)
-                        .font(.system(size: 14))
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 40)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(backgroundLayer)
+                .onAppear {
+                    print("📱 TripPlanView showing ERROR state: \(error)")
+                }
             } else {
-                // Empty state (shouldn't normally happen)
-                VStack(spacing: 20) {
-                    Image(systemName: "map")
-                        .font(.system(size: 48))
-                        .foregroundColor(.gray)
+                VStack(spacing: 16) {
+                    Image(systemName: "map.fill")
+                        .font(.system(size: 42))
+                        .foregroundColor(.white.opacity(0.5))
                     Text("Нет данных о маршруте")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.white.opacity(0.7))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(backgroundLayer)
+                .onAppear {
+                    print("📱 TripPlanView showing NO DATA state (plan=nil, isLoading=false, error=nil)")
                 }
             }
         }
-        .navigationTitle("Маршрут поездки")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: { openChat() }) {
-                    Image(systemName: "message.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.travelBuddyOrange)
-                }
-            }
-        }
+        .background(backgroundLayer.ignoresSafeArea())
+        .navigationBarHidden(true)
         .background(chatNavigationLink)
         .onChange(of: viewModel.isShowingPaywall) { newValue in
             showPaywall = newValue
@@ -129,184 +142,227 @@ struct TripPlanView: View {
             }
         }
     }
-    
-    private var tabContent: some View {
-        Group {
-            switch viewModel.selectedTab {
-            case .route:
-                routeContent
-            case .map:
-                mapPlaceholder
-            }
-        }
-    }
-    
-    private func headerCard(plan: TripPlan) -> some View {
-        let summary = plan.summary
 
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("\(plan.destinationCity), \(dateRangeText(start: plan.startDate, end: plan.endDate))")
-                        .font(.system(size: 21, weight: .semibold, design: .rounded))
-                        .foregroundColor(Color(.label))
-                        .lineLimit(2)
-                        .truncationMode(.tail)
-                    Text("\(plan.travellersCount) взрослых · \(plan.comfortLevel) · \(plan.interestsSummary)")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color(.secondaryLabel))
-                        .lineLimit(2)
-                        .truncationMode(.tail)
-                }
-                Spacer()
-                Button(action: { isShowingSummary = true }) {
-                    Image(systemName: "chart.bar.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(.label))
-                        .frame(width: 28, height: 28)
-                        .background(
-                            Circle()
-                                .fill(Color(.systemGray5))
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-
-            // Summary stats row
-            summaryStatsRow(summary: summary)
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
-        )
-        .sheet(isPresented: $isShowingSummary) {
-            NavigationView {
-                TripSummaryView(summary: summary, coordinate: plan.cityCoordinate)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button("Готово") {
-                                isShowingSummary = false
-                            }
-                        }
-                    }
-            }
-        }
-    }
-
-    private func summaryStatsRow(summary: TripSummary) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                summaryChip(
-                    icon: "figure.walk",
-                    text: summary.formattedTotalSteps,
-                    subtitle: "шагов"
-                )
-                summaryChip(
-                    icon: "map",
-                    text: summary.formattedTotalDistance,
-                    subtitle: nil
-                )
-                summaryChip(
-                    icon: "creditcard",
-                    text: summary.formattedTotalCostRange,
-                    subtitle: nil
-                )
-                summaryChip(
-                    icon: summary.overallIntensity.icon,
-                    text: summary.overallIntensity.displayName,
-                    subtitle: "темп"
-                )
-            }
-            .padding(.vertical, 2)
-        }
-    }
-
-    private func summaryChip(icon: String, text: String, subtitle: String?) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 11))
-                .foregroundColor(Color(red: 0.90, green: 0.35, blue: 0.20))
-
-            Text(text)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(Color(red: 0.90, green: 0.35, blue: 0.20))
-
-            if let subtitle = subtitle {
-                Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundColor(Color(red: 0.90, green: 0.35, blue: 0.20).opacity(0.8))
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(Color(red: 1.0, green: 0.93, blue: 0.89))
-        )
-    }
-    
-    private func chipView(text: String) -> some View {
-        Text(text)
-            .font(.system(size: 12, weight: .medium))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(Color(red: 1.0, green: 0.93, blue: 0.89))
+    private var backgroundLayer: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.14, green: 0.08, blue: 0.06),
+                    Color(red: 0.10, green: 0.06, blue: 0.04)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
             )
-            .foregroundColor(Color(red: 0.90, green: 0.35, blue: 0.20))
+            .ignoresSafeArea()
+            Image("noise")
+                .resizable(resizingMode: .tile)
+                .opacity(0.05)
+                .blendMode(.softLight)
+                .ignoresSafeArea()
+        }
     }
-    
-    private var tabSwitcher: some View {
-        HStack(spacing: 0) {
-            tabButton(title: "Маршрут", isSelected: viewModel.selectedTab == .route) {
-                viewModel.selectedTab = .route
+
+    private func heroSection(plan: TripPlan) -> some View {
+        let heroHeight: CGFloat = max(280, UIScreen.main.bounds.height * 0.42)
+        let imageURL = photoURL(for: plan.destinationCity)
+
+        return ZStack(alignment: .top) {
+            ZStack(alignment: .bottomLeading) {
+                if let imageURL {
+                    RemoteImageView(url: imageURL)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: heroHeight)
+                        .clipped()
+                } else {
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.18, green: 0.20, blue: 0.24),
+                            Color(red: 0.08, green: 0.09, blue: 0.12)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .frame(maxWidth: .infinity)
+                    .frame(height: heroHeight)
+                }
+
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.45),
+                        Color.black.opacity(0.15),
+                        Color(red: 0.10, green: 0.10, blue: 0.12)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: heroHeight)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(plan.destinationCity)
+                        .font(.system(size: 28, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Text("\(dateRangeText(start: plan.startDate, end: plan.endDate))  •  \(plan.travellersCount) путешественника")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.65))
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 14)
             }
-            tabButton(title: "Карта", isSelected: viewModel.selectedTab == .map) {
+            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    glassIconButton(systemName: "chevron.left") {
+                        dismiss()
+                    }
+                    Spacer()
+                    glassIconButton(systemName: "square.and.arrow.up") {
+                    }
+                    glassIconButton(systemName: "ellipsis") {
+                        openChat()
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 28)
+                Spacer()
+            }
+        }
+        .frame(height: heroHeight)
+        .clipped()
+    }
+
+    private var tabSwitcher: some View {
+        HStack(spacing: 6) {
+            segmentButton(title: "Обзор", isSelected: viewModel.selectedTab == .overview) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    viewModel.selectedTab = .overview
+                }
+            }
+            segmentButton(title: "Маршрут", isSelected: viewModel.selectedTab == .route) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    viewModel.selectedTab = .route
+                }
+            }
+            segmentButton(title: "Карта", isSelected: viewModel.selectedTab == .map) {
                 if viewModel.plan?.isLocked == true {
                     paywallError = "Карта доступна после входа"
                     viewModel.pendingIntent = .openMap
                     viewModel.isShowingPaywall = true
                 } else {
-                    viewModel.selectedTab = .map
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        viewModel.selectedTab = .map
+                    }
                 }
             }
         }
-        .frame(height: 38)
+        .padding(6)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
+            Capsule()
+                .fill(Color(red: 0.17, green: 0.17, blue: 0.18).opacity(0.7))
+                .background(.ultraThinMaterial, in: Capsule())
         )
+        .frame(maxWidth: 340)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .shadow(color: Color.black.opacity(0.25), radius: 8, x: 0, y: 6)
     }
-    
-    private func tabButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+
+    private func tabContent(plan: TripPlan) -> some View {
+        Group {
+            switch viewModel.selectedTab {
+            case .overview:
+                TripOverviewContentView(trip: plan, viewModel: viewModel)
+            case .route:
+                TripRouteContentView {
+                    routeContent(plan: plan)
+                }
+            case .map:
+                TripMapContentView {
+                    mapContent(plan: plan)
+                }
+            }
+        }
+    }
+
+    private func routeContent(plan: TripPlan) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            daySelector(plan: plan)
+            if let day = plan.days[safe: viewModel.selectedDayIndex] ?? plan.days.first {
+                dayHeader(day: day)
+                activityTimeline(activities: day.activities)
+            }
+        }
+    }
+
+    private func mapContent(plan: TripPlan) -> some View {
+        VStack(spacing: 14) {
+            daySelector(plan: plan)
+
+            if plan.isLocked {
+                LockedMapView {
+                    paywallError = "Карта доступна после входа"
+                    viewModel.pendingIntent = .openMap
+                    viewModel.isShowingPaywall = true
+                }
+                .frame(height: 360)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            } else if !viewModel.currentDayActivitiesWithCoordinates.isEmpty {
+                TripInteractiveMapView(
+                    activities: viewModel.currentDayActivitiesWithCoordinates,
+                    fallbackCoordinate: plan.cityCoordinate,
+                    isInteracting: $isMapInteracting
+                )
+                    .frame(height: 360)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            } else {
+                NoMapDataView()
+                    .frame(height: 360)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            }
+        }
+    }
+
+    private func segmentButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(isSelected ? .white : Color(.secondaryLabel))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(isSelected ? .white : Color.white.opacity(0.55))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(isSelected ? Color(red: 1.0, green: 0.45, blue: 0.35) : Color.clear)
+                    Capsule()
+                        .fill(isSelected ? Color.travelBuddyOrange : Color.clear)
                 )
         }
         .buttonStyle(.plain)
     }
-    
-    private var routeContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let plan = viewModel.plan {
-                daySelector(plan: plan)
-                let day = plan.days[safe: viewModel.selectedDayIndex] ?? plan.days.first
-                if let day {
-                    dayHeader(day: day)
-                        .padding(.top, 4)
-                    activityTimeline(activities: day.activities)
-                }
-            }
+
+    private func summaryStatsRow(summary: TripSummary) -> some View {
+        HStack(spacing: 10) {
+            metricChip(icon: "map", text: summary.formattedTotalDistance)
+            metricChip(icon: "figure.walk", text: summary.formattedTotalSteps)
+            metricChip(icon: "creditcard", text: summary.formattedTotalCostRange)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func metricChip(icon: String, text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Color.travelBuddyOrange)
+            Text(text)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.9))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            Capsule()
+                .fill(Color(red: 0.20, green: 0.20, blue: 0.22).opacity(0.7))
+                .background(.ultraThinMaterial, in: Capsule())
+        )
     }
 
     private func daySelector(plan: TripPlan) -> some View {
@@ -327,7 +383,7 @@ struct TripPlanView: View {
         }
 
         return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 ForEach(dayTabs) { day in
                     let isSelected = day.id - 1 == viewModel.selectedDayIndex
                     Button {
@@ -339,261 +395,327 @@ struct TripPlanView: View {
                             viewModel.selectedDayIndex = day.id - 1
                         }
                     } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("День \(day.id)")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text(dayDateText(day.date))
-                                .font(.system(size: 12))
-                                .foregroundColor(isSelected ? .white.opacity(0.9) : Color(.secondaryLabel))
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(isSelected ? Color(red: 1.0, green: 0.45, blue: 0.35) : Color(.secondarySystemBackground))
-                        )
-                        .foregroundColor(isSelected ? .white : (day.isLocked ? Color(.secondaryLabel) : Color(.label)))
+                        Text("День \(day.id)")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(isSelected ? Color.travelBuddyOrange : Color.white.opacity(0.6))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? Color.travelBuddyOrange.opacity(0.15) : Color(red: 0.20, green: 0.20, blue: 0.22).opacity(0.7))
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(isSelected ? Color.travelBuddyOrange : Color.clear, lineWidth: 1.2)
+                                    )
+                            )
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
     }
-    
+
     private func dayHeader(day: TripDay) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("День \(day.index)")
-                        .font(.system(size: 18, weight: .semibold))
-                    Text(fullDateText(day.date))
-                        .font(.system(size: 13))
-                        .foregroundColor(Color(.secondaryLabel))
-                }
-                Spacer()
-                Button(action: {
-                    openEdit(for: day)
-                }) {
-                    Text("Настроить")
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(fullDateText(day.date))
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.white)
+                if let title = day.title {
+                    Text(title)
                         .font(.system(size: 13, weight: .medium))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .stroke(Color(.systemGray4), lineWidth: 1)
-                        )
+                        .foregroundColor(.white.opacity(0.6))
+                        .lineLimit(2)
                 }
-                .buttonStyle(.plain)
             }
-            if let title = day.title {
-                Text(title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(Color(.label))
-                    .lineLimit(2)
+            Spacer()
+            Button(action: {
+                openEdit(for: day)
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Настроить")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundColor(Color.travelBuddyOrange)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(Color.travelBuddyOrange.opacity(0.15))
+                )
             }
-            if let summary = day.summary {
-                Text(summary)
-                    .font(.system(size: 13))
-                    .foregroundColor(Color(.secondaryLabel))
-                    .lineLimit(3)
-            }
+            .buttonStyle(.plain)
         }
     }
-    
+
     private func activityTimeline(activities: [TripActivity]) -> some View {
-        VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             ForEach(Array(activities.enumerated()), id: \.element.id) { index, activity in
                 Button {
                     selectedPlace = Place(from: activity)
                 } label: {
                     activityRow(activity: activity, isLast: index == activities.count - 1)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .buttonStyle(.plain)
             }
+        }
+    }
+
+    private func activityRow(activity: TripActivity, isLast: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(activity.time)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white.opacity(0.7))
+                .frame(width: 54, alignment: .leading)
+
+            timelineIndicator(isLast: isLast, color: color(for: activity.category))
+
+            activityCard(activity: activity)
+        }
+    }
+
+    private func timelineIndicator(isLast: Bool, color: Color) -> some View {
+        VStack(spacing: 0) {
+            Circle()
+                .fill(color)
+                .frame(width: 10, height: 10)
+                .overlay(
+                Circle()
+                    .stroke(Color(red: 0.10, green: 0.10, blue: 0.12), lineWidth: 4)
+            )
+            if !isLast {
+                Rectangle()
+                    .stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 5]))
+                    .foregroundColor(Color.white.opacity(0.12))
+                    .frame(width: 1)
+                    .frame(maxHeight: .infinity)
+                    .padding(.top, 6)
+            }
+        }
+        .frame(width: 14)
+    }
+
+    private func activityCard(activity: TripActivity) -> some View {
+        let showsThumbnail = activity.category == .museum || activity.category == .viewpoint || activity.category == .walk
+        let isMustSee = activity.note?.localizedCaseInsensitiveContains("must") == true || activity.category == .museum
+        let mealBadge = mealTitle(for: activity)
+
+        return HStack(alignment: .top, spacing: 12) {
+            if showsThumbnail {
+                thumbnailView(category: activity.category)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                if let mealBadge {
+                    badge(text: mealBadge, tint: Color.white.opacity(0.12), textColor: .white.opacity(0.85))
+                } else if isMustSee {
+                    badge(text: "MUST SEE", tint: Color.travelBuddyOrange.opacity(0.18), textColor: Color.travelBuddyOrange)
+                }
+                Text(activity.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                Text(activity.description)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.65))
+                    .lineLimit(2)
+                if let note = activity.note {
+                    Text(note)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Color.travelBuddyOrange)
+                }
+            }
+            Spacer()
+            Image(systemName: "mappin.and.ellipse")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white.opacity(0.5))
         }
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(.secondarySystemBackground))
+                .fill(Color(red: 0.18, green: 0.18, blue: 0.20).opacity(0.7))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .shadow(color: Color.black.opacity(0.25), radius: 12, x: 0, y: 8)
         )
     }
-    
-    private func activityRow(activity: TripActivity, isLast: Bool) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(activity.time)
-                .font(.system(size: 14))
-                .foregroundColor(Color(.secondaryLabel))
-                .frame(width: 52, alignment: .leading)
-            VStack {
-                Circle()
-                    .fill(color(for: activity.category))
-                    .frame(width: 10, height: 10)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white, lineWidth: 2)
-                    )
-                if !isLast {
-                    Rectangle()
-                        .fill(Color(.systemGray4))
-                        .frame(width: 2)
-                        .frame(maxHeight: .infinity)
-                        .padding(.top, 2)
-                }
-            }
-            .frame(width: 16)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(activity.title)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(Color(.label))
-                            .lineLimit(2)
-                        Text(activity.description)
-                            .font(.system(size: 13))
-                            .foregroundColor(Color(.secondaryLabel))
-                            .lineLimit(2)
-                        if let note = activity.note {
-                            Text(note)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.35))
-                        }
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 8) {
-                        categoryBadge(for: activity.category)
-                        Image(systemName: "mappin.and.ellipse")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(Color(.secondaryLabel))
-                    }
-                }
-            }
-        }
-    }
-    
-    private var mapPlaceholder: some View {
-        VStack(spacing: 0) {
-            // Day selector for the map (same as route view)
-            if let plan = viewModel.plan {
-                daySelector(plan: plan)
-                    .padding(.bottom, 12)
-            }
 
-            // Map or empty state
-            if viewModel.plan?.isLocked == true {
-                LockedMapView {
-                    paywallError = "Карта доступна после входа"
-                    viewModel.pendingIntent = .openMap
-                    viewModel.isShowingPaywall = true
-                }
-                .frame(height: 400)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            } else if !viewModel.currentDayActivitiesWithCoordinates.isEmpty {
-                RouteMapView(activities: viewModel.currentDayActivities)
-                    .frame(height: 400)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            } else {
-                NoMapDataView()
-                    .frame(height: 400)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            }
+    private func thumbnailView(category: TripActivityCategory) -> some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    color(for: category).opacity(0.9),
+                    color(for: category).opacity(0.4)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Image(systemName: icon(for: category))
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(.white)
         }
+        .frame(width: 44, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
-    
-    private var guideCTA: some View {
-        VStack(spacing: 10) {
-            Button {
-                isShowingGuide = true
-            } label: {
-                Text("Начать путешествие с гидом")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color(red: 1.0, green: 0.55, blue: 0.32),
-                                        Color(red: 1.0, green: 0.38, blue: 0.32)
-                                    ],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                    )
-            }
-            .buttonStyle(.plain)
-            
-            Text("Travel Buddy будет подсказывать места по плану и рядом с тобой.")
-                .font(.system(size: 12))
-                .foregroundColor(Color(.secondaryLabel))
-                .multilineTextAlignment(.center)
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 16)
-        .background(
-            Color(.systemBackground)
-                .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: -2)
-        )
-    }
-    
-    private func categoryBadge(for category: TripActivityCategory) -> some View {
-        Text(categoryTitle(for: category))
-            .font(.system(size: 12, weight: .semibold))
-            .padding(.horizontal, 10)
+
+    private func badge(text: String, tint: Color, textColor: Color) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(textColor)
+            .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(
                 Capsule()
-                    .fill(color(for: category).opacity(0.15))
+                    .fill(tint)
             )
-            .foregroundColor(color(for: category))
     }
-    
-    private func categoryTitle(for category: TripActivityCategory) -> String {
-        switch category {
-        case .food: return "Еда"
-        case .walk: return "Прогулка"
-        case .museum: return "История"
-        case .viewpoint: return "Вид"
-        case .nightlife: return "Вечер"
-        case .other: return "Другое"
+
+    private func guideCTA(height: CGFloat) -> some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.10, green: 0.10, blue: 0.12).opacity(0.0),
+                    Color(red: 0.10, green: 0.10, blue: 0.12).opacity(0.85)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            Button {
+                isShowingGuide = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "location.north.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 32, height: 32)
+                        .background(
+                            Circle()
+                                .fill(Color.white.opacity(0.2))
+                        )
+                    Text("Начать путешествие с гидом")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                    Spacer()
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            Circle()
+                                .fill(Color.white.opacity(0.2))
+                        )
+                }
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity)
+                .frame(height: height)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color.travelBuddyOrange)
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+        }
+        .frame(height: height)
+    }
+
+    private func glassIconButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 40, height: 40)
+                .background(Color.black.opacity(0.3), in: Circle())
+                .overlay(
+                    Circle()
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func dateRangeText(start: Date, end: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateFormat = "d MMM"
+        let yearFormatter = DateFormatter()
+        yearFormatter.locale = Locale(identifier: "ru_RU")
+        yearFormatter.dateFormat = "yyyy"
+        return "\(formatter.string(from: start)) – \(formatter.string(from: end)) \(yearFormatter.string(from: end))"
+    }
+
+    private func fullDateText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateFormat = "EEEE, d MMM"
+        return formatter.string(from: date).capitalized
+    }
+
+    private func mealTitle(for activity: TripActivity) -> String? {
+        guard activity.category == .food else { return nil }
+        let hour = Int(activity.time.prefix(2)) ?? 12
+        switch hour {
+        case 5..<11:
+            return "Завтрак"
+        case 11..<16:
+            return "Обед"
+        case 16..<22:
+            return "Ужин"
+        default:
+            return "Еда"
         }
     }
-    
+
+    private func icon(for category: TripActivityCategory) -> String {
+        switch category {
+        case .food: return "fork.knife"
+        case .walk: return "figure.walk"
+        case .museum: return "building.columns"
+        case .viewpoint: return "binoculars"
+        case .nightlife: return "moon.stars.fill"
+        case .other: return "star.fill"
+        }
+    }
+
     private func color(for category: TripActivityCategory) -> Color {
         switch category {
         case .food: return Color(red: 1.0, green: 0.55, blue: 0.30)
         case .walk: return Color(red: 0.26, green: 0.66, blue: 0.45)
-        case .museum: return Color(.systemIndigo)
+        case .museum: return Color(red: 0.42, green: 0.48, blue: 0.95)
         case .viewpoint: return Color(red: 0.15, green: 0.6, blue: 0.9)
         case .nightlife: return Color(red: 0.7, green: 0.4, blue: 0.9)
         case .other: return Color(.systemGray)
         }
     }
-    
-    private func dateRangeText(start: Date, end: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.dateFormat = "d MMMM yyyy"
-        return "\(formatter.string(from: start)) – \(formatter.string(from: end))"
+
+    private func photoURL(for city: String) -> URL? {
+        let mapped: [String: String] = [
+            "Париж": "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?fit=crop&w=1200&q=80&fm=jpg",
+            "Paris": "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?fit=crop&w=1200&q=80&fm=jpg",
+            "Стамбул": "https://images.unsplash.com/photo-1543946207-39bd91e70ca7?fit=crop&w=1200&q=80&fm=jpg",
+            "Istanbul": "https://images.unsplash.com/photo-1543946207-39bd91e70ca7?fit=crop&w=1200&q=80&fm=jpg",
+            "Цюрих": "https://images.unsplash.com/photo-1469474968028-56623f02e42e?fit=crop&w=1200&q=80&fm=jpg",
+            "Zurich": "https://images.unsplash.com/photo-1469474968028-56623f02e42e?fit=crop&w=1200&q=80&fm=jpg",
+            "Бали": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?fit=crop&w=1200&q=80&fm=jpg",
+            "Bali": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?fit=crop&w=1200&q=80&fm=jpg",
+            "Нью-Йорк": "https://images.unsplash.com/photo-1549924231-f129b911e442?fit=crop&w=1200&q=80&fm=jpg",
+            "New York": "https://images.unsplash.com/photo-1549924231-f129b911e442?fit=crop&w=1200&q=80&fm=jpg"
+        ]
+
+        // Try exact match first
+        if let urlString = mapped[city] {
+            return URL(string: urlString)
+        }
+
+        // Extract clean city name (first part before comma) and try again
+        let cleanCity = city.components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? city
+        if let urlString = mapped[cleanCity] {
+            return URL(string: urlString)
+        }
+
+        return nil
     }
-    
-    private func dayDateText(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.dateFormat = "d MMM"
-        return formatter.string(from: date)
-    }
-    
-    private func fullDateText(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.dateFormat = "d MMMM, EEEE"
-        return formatter.string(from: date)
-    }
-    
+
     private var guideNavigationLink: some View {
         NavigationLink(isActive: $isShowingGuide) {
             LiveGuideView()
@@ -602,7 +724,7 @@ struct TripPlanView: View {
         }
         .hidden()
     }
-    
+
     private var editDayNavigationLink: some View {
         NavigationLink(isActive: $isShowingEditDay) {
             Group {
@@ -634,6 +756,30 @@ struct TripPlanView: View {
     }
 }
 
+private struct TripRouteContentView<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+    }
+}
+
+private struct TripMapContentView<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+    }
+}
+
 private struct LockedMapView: View {
     let onUnlock: () -> Void
 
@@ -644,10 +790,10 @@ private struct LockedMapView: View {
                 .foregroundColor(.orange)
             Text("Карта доступна после входа")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(Color(.label))
+                .foregroundColor(.white)
             Text("Авторизуйтесь, чтобы увидеть все точки маршрута на карте.")
                 .font(.system(size: 13))
-                .foregroundColor(Color(.secondaryLabel))
+                .foregroundColor(.white.opacity(0.7))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
             Button(action: onUnlock) {
@@ -658,12 +804,12 @@ private struct LockedMapView: View {
                     .padding(.vertical, 10)
                     .background(
                         Capsule()
-                            .fill(Color(red: 1.0, green: 0.45, blue: 0.35))
+                            .fill(Color.travelBuddyOrange)
                     )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.secondarySystemBackground))
+        .background(Color.white.opacity(0.06))
     }
 }
 
@@ -686,8 +832,6 @@ extension TripPlanView {
 
     private func openChat() {
         guard let plan = viewModel.plan else { return }
-
-        // Create ChatViewModel with the trip ID and plan update callback
         chatViewModel = ChatViewModel(
             tripId: plan.tripId,
             onPlanUpdateRequested: { [weak viewModel] in
@@ -729,7 +873,9 @@ extension TripPlanView {
             Task {
                 let refreshed = await viewModel.refreshPlanAfterAuth()
                 guard refreshed else { return }
-                viewModel.selectedTab = .map
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    viewModel.selectedTab = .map
+                }
             }
         }
     }

@@ -11,6 +11,7 @@ cryptography>=41.0.0
 # Database
 sqlalchemy[asyncio]==2.0.25
 asyncpg==0.29.0
+aiosqlite==0.20.0
 alembic==1.13.1
 
 # LLM Client

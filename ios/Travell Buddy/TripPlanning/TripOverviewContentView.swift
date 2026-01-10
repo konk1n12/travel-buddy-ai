@@ -1,140 +1,36 @@
 //
-//  TripSummaryView.swift
+//  TripOverviewContentView.swift
 //  Travell Buddy
 //
-//  Full trip summary view with premium overview layout.
+//  Overview content for the trip plan tabs.
 //
 
 import SwiftUI
 import CoreLocation
 import MapKit
 
-struct TripSummaryView: View {
-    @Environment(\.dismiss) private var dismiss
-    @StateObject private var viewModel: TripSummaryViewModel
+struct TripOverviewContentView: View {
+    let trip: TripPlan
+    @ObservedObject var viewModel: TripPlanViewModel
+    @StateObject private var summaryViewModel: TripSummaryViewModel
     private let coordinate: CLLocationCoordinate2D?
 
-    private let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.dateFormat = "d MMM"
-        return formatter
-    }()
-
-    init(summary: TripSummary, coordinate: CLLocationCoordinate2D? = nil) {
-        _viewModel = StateObject(wrappedValue: TripSummaryViewModel(summary: summary, coordinate: coordinate))
-        self.coordinate = coordinate
+    init(trip: TripPlan, viewModel: TripPlanViewModel) {
+        self.trip = trip
+        self.viewModel = viewModel
+        self.coordinate = trip.cityCoordinate
+        _summaryViewModel = StateObject(
+            wrappedValue: TripSummaryViewModel(summary: trip.summary, coordinate: trip.cityCoordinate)
+        )
     }
 
-    private var summary: TripSummary { viewModel.summary }
+    private var summary: TripSummary { summaryViewModel.summary }
+    private var primaryText: Color { .white.opacity(0.94) }
+    private var secondaryText: Color { .white.opacity(0.62) }
+    private var tertiaryText: Color { .white.opacity(0.45) }
 
     var body: some View {
-        ZStack {
-            backgroundLayer
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 22) {
-                    heroSection
-                    overviewContent
-                }
-                .padding(.bottom, 90)
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            bottomCTA
-        }
-        .navigationBarHidden(true)
-        .task {
-            await viewModel.loadWeather()
-        }
-    }
-
-    private var backgroundLayer: some View {
-        LinearGradient(
-            colors: [
-                Color(red: 0.10, green: 0.10, blue: 0.10),
-                Color(red: 0.06, green: 0.06, blue: 0.06)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .ignoresSafeArea()
-    }
-
-    private var heroSection: some View {
-        let heroURL = photoURL(for: summary.city)
-
-        return ZStack(alignment: .top) {
-            ZStack(alignment: .bottomLeading) {
-                if let heroURL {
-                    RemoteImageView(url: heroURL)
-                        .frame(height: 420)
-                        .frame(maxWidth: .infinity)
-                        .clipped()
-                } else {
-                    LinearGradient(
-                        colors: [Color.black.opacity(0.4), Color.black.opacity(0.8)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .frame(height: 420)
-                    .frame(maxWidth: .infinity)
-                }
-
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.4),
-                        Color.black.opacity(0.0),
-                        Color(red: 0.06, green: 0.06, blue: 0.06)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(summary.city)
-                        .font(.system(size: 40, weight: .bold))
-                        .foregroundColor(.white)
-                    HStack(spacing: 8) {
-                        Image(systemName: "calendar")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("\(dateFormatter.string(from: summary.startDate)) – \(dateFormatter.string(from: summary.endDate))")
-                        Text("•")
-                        Image(systemName: "person")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("\(summary.travelersCount) путешественника")
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.8))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill(Color.black.opacity(0.35))
-                    )
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 24)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-
-            HStack(spacing: 12) {
-                glassButton(systemName: "chevron.left") {
-                    dismiss()
-                }
-                Spacer()
-                glassButton(systemName: "square.and.arrow.up") { }
-                glassButton(systemName: "ellipsis") { }
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 24)
-        }
-    }
-
-    private var overviewContent: some View {
         VStack(spacing: 20) {
-            segmentControl
             aiInsights
             tipChips
             aboutTrip
@@ -144,39 +40,9 @@ struct TripSummaryView: View {
             miniMapCard
             budgetCard
         }
-        .padding(.horizontal, 16)
-    }
-
-    private var segmentControl: some View {
-        HStack(spacing: 6) {
-            Button(action: {}) {
-                Text("Обзор")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(
-                        Capsule()
-                            .fill(Color.travelBuddyOrange)
-                    )
-            }
-            Button(action: { dismiss() }) {
-                Text("Маршрут")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.6))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-            Button(action: {}) {
-                Text("Билеты")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.6))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
+        .task {
+            await summaryViewModel.loadWeather()
         }
-        .padding(6)
-        .background(glassCard)
     }
 
     private var aiInsights: some View {
@@ -192,7 +58,7 @@ struct TripSummaryView: View {
                     )
                 Text("AI-инсайты")
                     .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(primaryText)
             }
 
             VStack(spacing: 10) {
@@ -209,21 +75,23 @@ struct TripSummaryView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(insight.title)
                                 .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.9))
+                                .foregroundColor(primaryText)
                             Text(insight.subtitle)
                                 .font(.system(size: 12))
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(secondaryText)
                         }
                         Spacer()
                         Image(systemName: "chevron.right")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(tertiaryText)
                     }
-                    .padding(14)
-                    .background(glassCard)
+                    .padding(12)
+                    .background(innerGlassCard)
                 }
             }
         }
+        .padding(16)
+        .background(primaryGlassCard)
     }
 
     private var tipChips: some View {
@@ -243,13 +111,15 @@ struct TripSummaryView: View {
                             .foregroundColor(Color.travelBuddyOrange)
                         Text(tip.0)
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.white)
+                            .foregroundColor(primaryText)
                     }
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(glassCard)
+                    .padding(.vertical, 8)
+                    .frame(height: 34)
+                    .background(chipGlass)
                 }
             }
+            .contentMargins(.horizontal, 16, for: .scrollContent)
         }
     }
 
@@ -258,19 +128,24 @@ struct TripSummaryView: View {
             HStack {
                 Text("О поездке")
                     .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(primaryText)
                 Spacer()
-                Text("Больше")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color.travelBuddyOrange)
+                Button(action: {}) {
+                    HStack(spacing: 6) {
+                        Text("Читать далее")
+                        Image(systemName: "arrow.right")
+                    }
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color.travelBuddyOrange)
             }
             Text(summary.tripDescription ?? "План составлен так, чтобы успеть основные точки и оставить время для отдыха.")
                 .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(secondaryText)
                 .lineLimit(4)
         }
         .padding(16)
-        .background(glassCard)
+        .background(primaryGlassCard)
     }
 
     private var statsGrid: some View {
@@ -291,46 +166,46 @@ struct TripSummaryView: View {
                         .overlay(
                             Image(systemName: stat.icon)
                                 .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.85))
+                                .foregroundColor(secondaryText)
                         )
                     Text(stat.value)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(.white)
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundColor(primaryText)
                     Text(stat.title)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.5))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.55))
                 }
                 .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
                 .padding(16)
-                .background(glassCard)
+                .background(secondaryGlassCard)
             }
         }
     }
 
     private var weatherCard: some View {
-        let dayWeather = viewModel.daySummaries.compactMap { $0.weather }.first
+        let dayWeather = summaryViewModel.daySummaries.compactMap { $0.weather }.first
 
         return HStack {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Погода сейчас")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(secondaryText)
                 if let dayWeather {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("\(Int(dayWeather.temperatureHigh))°")
-                            .font(.system(size: 30, weight: .bold))
-                            .foregroundColor(.white)
+                            .font(.system(size: 30, weight: .semibold))
+                            .foregroundColor(primaryText)
                         Text(dayWeather.condition.description)
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(secondaryText)
                     }
                     Text("Ощущается как \(Int(dayWeather.temperatureLow))° • Ветер \(Int(dayWeather.windSpeed)) м/с")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(tertiaryText)
                 } else {
                     Text("Загрузка прогноза…")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(secondaryText)
                 }
             }
             Spacer()
@@ -338,17 +213,17 @@ struct TripSummaryView: View {
                 .font(.system(size: 40))
                 .foregroundColor(.yellow)
         }
-        .padding(18)
-        .background(glassCard)
+        .padding(16)
+        .background(primaryGlassCard)
     }
 
     private var keyLocations: some View {
-        let items = viewModel.daySummaries.prefix(3)
+        let items = summaryViewModel.daySummaries.prefix(3)
 
         return VStack(alignment: .leading, spacing: 12) {
             Text("Главные локации")
                 .font(.system(size: 18, weight: .bold))
-                .foregroundColor(.white)
+                .foregroundColor(primaryText)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(items) { day in
@@ -361,10 +236,10 @@ struct TripSummaryView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(day.title ?? "День \(day.dayIndex)")
                                     .font(.system(size: 13, weight: .bold))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(primaryText)
                                 Text("День \(day.dayIndex)")
                                     .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.6))
+                                    .foregroundColor(secondaryText)
                             }
                             .padding(12)
                         }
@@ -409,7 +284,7 @@ struct TripSummaryView: View {
                             Text("Открыть карту")
                                 .font(.system(size: 11, weight: .bold))
                         }
-                        .foregroundColor(.white)
+                        .foregroundColor(primaryText)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(
@@ -419,7 +294,7 @@ struct TripSummaryView: View {
                     }
                     .padding(12)
                 }
-                .background(glassCard)
+                .background(primaryGlassCard)
             }
         }
     }
@@ -442,12 +317,12 @@ struct TripSummaryView: View {
                         )
                     Text("Бюджет")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(primaryText)
                 }
                 Spacer()
                 Text("\(formattedCurrency(spent)) из \(formattedCurrency(total))")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(secondaryText)
             }
 
             GeometryReader { proxy in
@@ -467,71 +342,73 @@ struct TripSummaryView: View {
                 Text("Осталось")
             }
             .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(.white.opacity(0.4))
+            .foregroundColor(tertiaryText)
         }
         .padding(16)
-        .background(glassCard)
+        .background(primaryGlassCard)
     }
 
-    private var bottomCTA: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color.black.opacity(0.0),
-                    Color.black.opacity(0.9)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
+    private var primaryGlassCard: some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        return shape
+            .fill(Color.black.opacity(0.20))
+            .overlay(
+                shape.fill(Color(red: 0.36, green: 0.22, blue: 0.14).opacity(0.06))
             )
-            Button(action: {}) {
-                HStack(spacing: 8) {
-                    Text("Начать путешествие с гидом")
-                        .font(.system(size: 16, weight: .bold))
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 14, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 56)
-                .background(
-                    Capsule()
-                        .fill(Color.travelBuddyOrange)
+            .background(.ultraThinMaterial, in: shape)
+            .overlay(
+                shape.stroke(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.14), Color.white.opacity(0.06)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
                 )
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 8)
-        }
-        .frame(height: 80)
+            )
+            .shadow(color: Color.black.opacity(0.35), radius: 28, x: 0, y: 14)
     }
 
-    private var glassCard: some View {
+    private var secondaryGlassCard: some View {
         RoundedRectangle(cornerRadius: 22, style: .continuous)
-            .fill(Color.white.opacity(0.04))
+            .fill(Color.white.opacity(0.06))
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
             )
     }
 
-    private func glassButton(systemName: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(width: 48, height: 48)
-                .background(Color.black.opacity(0.3), in: Circle())
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+    private var innerGlassCard: some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        return shape
+            .fill(Color.black.opacity(0.32))
+            .background(.ultraThinMaterial, in: shape)
+            .overlay(
+                shape.stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+            .overlay(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.06), Color.clear],
+                    startPoint: .top,
+                    endPoint: .center
                 )
-        }
-        .buttonStyle(.plain)
+                .clipShape(shape)
+            )
+    }
+
+    private var chipGlass: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(Color.black.opacity(0.22))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+            )
     }
 
     private var insights: [Insight] {
         var result: [Insight] = []
-        if let first = viewModel.daySummaries.first?.firstActivityTime {
+        if let first = summaryViewModel.daySummaries.first?.firstActivityTime {
             result.append(Insight(icon: "sun.max", title: "Лучший старт дня — \(first)", subtitle: "Начните день без очередей"))
         }
         result.append(Insight(icon: "figure.walk", title: "Темп поездки: \(summary.overallIntensity.displayName)", subtitle: summary.overallIntensity.description))
@@ -552,30 +429,6 @@ struct TripSummaryView: View {
         formatter.currencyCode = summary.currency
         formatter.maximumFractionDigits = 0
         return formatter.string(from: NSNumber(value: value)) ?? "\(Int(value))"
-    }
-
-    private func photoURL(for city: String) -> URL? {
-        let mapped: [String: String] = [
-            "Париж": "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?fit=crop&w=1400&q=80&fm=jpg",
-            "Paris": "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?fit=crop&w=1400&q=80&fm=jpg",
-            "Стамбул": "https://images.unsplash.com/photo-1504274066651-8d31a536b11a?fit=crop&w=1400&q=80&fm=jpg",
-            "Istanbul": "https://images.unsplash.com/photo-1504274066651-8d31a536b11a?fit=crop&w=1400&q=80&fm=jpg",
-            "Рим": "https://images.unsplash.com/photo-1504753793650-d4a2b783c15e?fit=crop&w=1400&q=80&fm=jpg",
-            "Rome": "https://images.unsplash.com/photo-1504753793650-d4a2b783c15e?fit=crop&w=1400&q=80&fm=jpg"
-        ]
-
-        // Try exact match first
-        if let urlString = mapped[city] {
-            return URL(string: urlString)
-        }
-
-        // Extract clean city name (first part before comma) and try again
-        let cleanCity = city.components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? city
-        if let urlString = mapped[cleanCity] {
-            return URL(string: urlString)
-        }
-
-        return nil
     }
 }
 

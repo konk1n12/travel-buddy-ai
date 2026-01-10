@@ -251,7 +251,7 @@ async def fetch_place_photo(photo_reference: str, max_width: int = 1200) -> byte
         "key": settings.google_maps_api_key,
     }
 
-    async with httpx.AsyncClient(timeout=settings.google_places_timeout_seconds) as client:
+    async with httpx.AsyncClient(timeout=settings.google_places_timeout_seconds, follow_redirects=True) as client:
         response = await client.get(settings.google_place_photo_base_url, params=params)
         response.raise_for_status()
         return response.content
