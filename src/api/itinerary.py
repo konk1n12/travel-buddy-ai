@@ -160,8 +160,15 @@ async def get_itinerary(
 
     orchestrator = TripPlannerOrchestrator()
 
+    print(f"\n🔍 GET /itinerary called for trip={trip_id}")
+
     try:
         itinerary = await orchestrator.get_itinerary(trip_id, db)
+        print(f"   ✅ Returned {len(itinerary.days)} days")
+        for i, day in enumerate(itinerary.days, 1):
+            blocks = len(day.blocks)
+            pois = sum(1 for b in day.blocks if b.poi)
+            print(f"      Day {i}: {blocks} blocks, {pois} POIs, theme='{day.theme}'")
         return apply_guest_content_limit(itinerary, auth.is_authenticated)
 
     except ValueError as e:

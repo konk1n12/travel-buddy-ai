@@ -2044,13 +2044,27 @@ Return JSON only:
         Returns:
             ItineraryResponse if itinerary exists, None otherwise
         """
+        print(f"\n🔍 get_itinerary() called for trip={trip_id}")
+
+        # Force expire all cached objects to get fresh data from DB
+        db.expire_all()
+        print(f"   ♻️  Expired all cached objects")
+
         result = await db.execute(
             select(ItineraryModel).where(ItineraryModel.trip_id == trip_id)
         )
         itinerary_model = result.scalars().first()
 
         if not itinerary_model or not itinerary_model.days:
+            print(f"   ❌ No itinerary found")
             return None
+
+        print(f"   ✅ Found itinerary: {len(itinerary_model.days if itinerary_model.days else [])} days")
+        if itinerary_model.days:
+            for day in itinerary_model.days:
+                blocks = day.get('blocks', [])
+                pois = sum(1 for b in blocks if b.get('poi'))
+                print(f"      Day {day.get('day_number')}: {len(blocks)} blocks, {pois} POIs")
 
         # Parse stored JSON back into ItineraryDay objects
         itinerary_days = [ItineraryDay(**day_data) for day_data in itinerary_model.days]

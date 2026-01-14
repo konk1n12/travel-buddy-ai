@@ -67,7 +67,15 @@ final class TripPlanViewModel: ObservableObject {
     /// Refresh itinerary after authentication to unlock full content.
     @MainActor
     func refreshPlanAfterAuth() async -> Bool {
+        return await refreshItinerary()
+    }
+
+    /// Refresh itinerary from backend (e.g., after day editing in AI Studio).
+    @MainActor
+    func refreshItinerary() async -> Bool {
         guard let existingPlan = plan else { return false }
+
+        print("🔄 Refreshing itinerary for trip \(existingPlan.tripId)")
 
         isLoading = true
         defer { isLoading = false }
@@ -75,8 +83,10 @@ final class TripPlanViewModel: ObservableObject {
         do {
             let itinerary = try await apiClient.getItinerary(tripId: existingPlan.tripId.uuidString.lowercased())
             self.plan = itinerary.toTripPlan(using: existingPlan)
+            print("✅ Itinerary refreshed successfully")
             return true
         } catch {
+            print("❌ Failed to refresh itinerary: \(error)")
             self.errorMessage = (error as? LocalizedError)?.errorDescription
                 ?? "Не удалось обновить маршрут. Попробуйте ещё раз."
             return false

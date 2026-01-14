@@ -1,11 +1,14 @@
 """
 Day Studio API endpoints for AI-powered day editing.
 """
+import logging
 from uuid import UUID
 from typing import Optional, List
 from datetime import datetime, time
 import hashlib
 import json
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +19,7 @@ from src.infrastructure.database import get_db
 from src.infrastructure.models import TripModel, ItineraryModel
 from src.auth.dependencies import get_auth_context, AuthContext, check_trip_ownership
 from src.domain.models import ItineraryDay, ItineraryBlock, POICandidate
+from src.application.day_editor import DayEditor, DayChange, ChangeType
 
 
 router = APIRouter(prefix="/trips", tags=["day-studio"])
@@ -340,6 +344,8 @@ async def apply_day_changes(
     Returns:
         Updated DayStudioResponse
     """
+    print(f"\n🎯 apply_day_changes CALLED: trip={trip_id}, day={day_id}, changes={len(request.changes)}")
+
     # Verify trip exists and user has access
     trip_result = await db.execute(
         select(TripModel).where(TripModel.id == trip_id)
@@ -370,52 +376,172 @@ async def apply_day_changes(
             detail="Itinerary not found"
         )
 
-    # TODO: Check revision for conflict
-    # TODO: Process each change type
-    # TODO: Regenerate route if places changed
-    # TODO: Update database
+    # TODO: Check revision for conflict (future enhancement)
 
-    # For now, process changes and return updated state
-    new_settings = DaySettingsDTO()
-    new_preset = None
-
+    # Convert API changes to DayEditor changes
+    day_changes = []
     for change in request.changes:
-        if change.type == "update_settings":
-            if change.data.tempo:
-                new_settings.tempo = change.data.tempo
-            if change.data.start_time:
-                new_settings.start_time = change.data.start_time
-            if change.data.end_time:
-                new_settings.end_time = change.data.end_time
-            if change.data.budget:
-                new_settings.budget = change.data.budget
+        change_type_map = {
+            "update_settings": ChangeType.UPDATE_SETTINGS,
+            "set_preset": ChangeType.SET_PRESET,
+            "add_place": ChangeType.ADD_PLACE,
+            "replace_place": ChangeType.REPLACE_PLACE,
+            "remove_place": ChangeType.REMOVE_PLACE,
+            "add_wish_message": ChangeType.ADD_WISH_MESSAGE,
+        }
 
-        elif change.type == "set_preset":
-            new_preset = change.data.preset
+        change_type = change_type_map.get(change.type)
+        if not change_type:
+            logger.warning(f"Unknown change type: {change.type}")
+            continue
 
-        # TODO: Handle other change types
+        # Build change data dict
+        data = {}
+        if change.data.tempo:
+            data["tempo"] = change.data.tempo
+        if change.data.start_time:
+            data["start_time"] = change.data.start_time
+        if change.data.end_time:
+            data["end_time"] = change.data.end_time
+        if change.data.budget:
+            data["budget"] = change.data.budget
+        if change.data.preset is not None:
+            data["preset"] = change.data.preset
+        if change.data.place_id:
+            data["place_id"] = change.data.place_id
+        if change.data.placement:
+            data["placement"] = {
+                "type": change.data.placement.type,
+                "slot_index": change.data.placement.slot_index,
+                "hour": change.data.placement.hour,
+                "minute": change.data.placement.minute,
+            }
+        if change.data.from_place_id:
+            data["from_place_id"] = change.data.from_place_id
+        if change.data.to_place_id:
+            data["to_place_id"] = change.data.to_place_id
+        if change.data.text:
+            data["text"] = change.data.text
 
-    # Re-fetch current state and apply changes
-    current_state = await get_day_studio(trip_id, day_id, db, auth)
+        day_changes.append(DayChange(type=change_type, data=data))
 
-    # Update with changes
-    current_state.settings = new_settings
-    current_state.preset = new_preset
-    current_state.revision += 1
+    print(f"📝 Converted {len(day_changes)} changes for DayEditor")
+    for i, dc in enumerate(day_changes):
+        print(f"   Change {i+1}: {dc.type.value} - data: {dc.data}")
 
-    # Regenerate AI summary with new context
-    current_state.ai_summary = await _generate_day_summary(
-        city=trip.city,
-        day_number=day_id,
-        places=current_state.day.places,
-        theme="",
-        preset=new_preset,
-        tempo=new_settings.tempo,
-        budget=new_settings.budget,
-        db=db
-    )
+    logger.info(f"🔄 Applying {len(day_changes)} changes to day {day_id} of trip {trip_id}")
+    for i, dc in enumerate(day_changes):
+        logger.info(f"   Change {i+1}: {dc.type.value} - data: {dc.data}")
 
-    return current_state
+    # Apply changes using DayEditor
+    print(f"🔧 Creating DayEditor instance...")
+    editor = DayEditor()
+
+    try:
+        print(f"🚀 Calling editor.apply_changes_to_day()...")
+        updated_day = await editor.apply_changes_to_day(
+            trip_id=trip_id,
+            day_number=day_id,
+            changes=day_changes,
+            db=db
+        )
+        print(f"✅ DayEditor returned: {len(updated_day.blocks)} blocks")
+
+        # Convert updated day back to response format
+        places = []
+        for block in updated_day.blocks:
+            if block.poi:
+                places.append(StudioPlaceDTO(
+                    id=str(block.poi.poi_id),
+                    name=block.poi.name,
+                    latitude=block.poi.lat or 0.0,
+                    longitude=block.poi.lon or 0.0,
+                    time_start=block.start_time[:5] if isinstance(block.start_time, str) else block.start_time.strftime("%H:%M"),
+                    time_end=block.end_time[:5] if isinstance(block.end_time, str) else block.end_time.strftime("%H:%M"),
+                    category=block.poi.category,
+                    rating=block.poi.rating,
+                    price_level=None,  # TODO: Add price level support
+                    photo_url=None,
+                    address=block.poi.location
+                ))
+
+        # Calculate metrics
+        total_distance_m = sum(b.travel_distance_meters or 0 for b in updated_day.blocks)
+        total_walking_minutes = sum(b.travel_time_from_prev or 0 for b in updated_day.blocks)
+        distance_km = total_distance_m / 1000.0
+        steps_estimate = int(distance_km * 1300)
+
+        metrics = DayMetricsDTO(
+            distance_km=round(distance_km, 1),
+            steps_estimate=steps_estimate,
+            places_count=len(places),
+            walking_time_minutes=total_walking_minutes
+        )
+
+        # Extract settings from changes or use defaults
+        new_settings = DaySettingsDTO(
+            tempo=trip.pace.value if trip.pace else "medium",
+            start_time="08:00",
+            end_time="18:00",
+            budget=trip.budget.value if trip.budget else "medium"
+        )
+        new_preset = None
+
+        for change in day_changes:
+            if change.type == ChangeType.UPDATE_SETTINGS:
+                if "tempo" in change.data:
+                    new_settings.tempo = change.data["tempo"]
+                if "start_time" in change.data:
+                    new_settings.start_time = change.data["start_time"]
+                if "end_time" in change.data:
+                    new_settings.end_time = change.data["end_time"]
+                if "budget" in change.data:
+                    new_settings.budget = change.data["budget"]
+            elif change.type == ChangeType.SET_PRESET:
+                new_preset = change.data.get("preset")
+
+        # Regenerate AI summary
+        ai_summary = await _generate_day_summary(
+            city=trip.city,
+            day_number=day_id,
+            places=places,
+            theme=updated_day.theme,
+            preset=new_preset,
+            tempo=new_settings.tempo,
+            budget=new_settings.budget,
+            db=db
+        )
+
+        # TODO: Load wishes from database
+        wishes: List[WishMessageDTO] = []
+
+        response = DayStudioResponse(
+            day=DayStudioDataDTO(places=places, wishes=wishes),
+            settings=new_settings,
+            preset=new_preset,
+            ai_summary=ai_summary,
+            metrics=metrics,
+            suggestions=None,
+            revision=request.base_revision + 1
+        )
+
+        print(f"📤 Returning response with {len(places)} places, revision={response.revision}")
+        print(f"   Settings: start={new_settings.start_time}, end={new_settings.end_time}")
+        print(f"   Preset: {new_preset}")
+
+        return response
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Failed to apply changes to day {day_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to apply changes: {str(e)}"
+        )
 
 
 # MARK: - Place Search Router

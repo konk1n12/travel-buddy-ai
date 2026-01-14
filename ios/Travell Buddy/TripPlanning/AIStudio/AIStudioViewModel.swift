@@ -241,6 +241,7 @@ final class AIStudioViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var isApplying: Bool = false
     @Published var errorMessage: String?
+    @Published var shouldDismiss: Bool = false
 
     // MARK: - Properties
 
@@ -248,6 +249,7 @@ final class AIStudioViewModel: ObservableObject {
     let dayId: Int
     let cityName: String
     let dayDate: Date
+    var onChangesApplied: (() async -> Void)?
 
     var dirtyCount: Int {
         pendingChanges.count
@@ -344,6 +346,9 @@ final class AIStudioViewModel: ObservableObject {
            endTime != serverState.endTime ||
            budget != serverState.budget {
             pendingChanges.append(PendingChange(type: .updateSettings))
+            print("📝 Added settings change. Total pending: \(pendingChanges.count)")
+        } else {
+            print("⚠️ Settings unchanged, not adding to pending")
         }
     }
 
@@ -362,6 +367,9 @@ final class AIStudioViewModel: ObservableObject {
         // Only add if different from server state
         if preset != serverState.preset {
             pendingChanges.append(PendingChange(type: .setPreset(preset)))
+            print("📝 Added preset change: \(preset?.rawValue ?? "nil"). Total pending: \(pendingChanges.count)")
+        } else {
+            print("⚠️ Preset unchanged, not adding to pending")
         }
     }
 
@@ -405,6 +413,7 @@ final class AIStudioViewModel: ObservableObject {
 
     func addPlace(_ result: StudioSearchResult, placement: PlacePlacement) {
         pendingChanges.append(PendingChange(type: .addPlace(placeId: result.id, placement: placement)))
+        print("📝 Added place: \(result.name). Total pending: \(pendingChanges.count)")
         searchQuery = ""
         searchResults = []
     }
@@ -422,11 +431,13 @@ final class AIStudioViewModel: ObservableObject {
 
     func replacePlace(from originalId: String, to newId: String) {
         pendingChanges.append(PendingChange(type: .replacePlace(fromPlaceId: originalId, toPlaceId: newId)))
+        print("📝 Replace place: \(originalId) -> \(newId). Total pending: \(pendingChanges.count)")
         expandedReplacementPlaceId = nil
     }
 
     func removePlace(_ placeId: String) {
         pendingChanges.append(PendingChange(type: .removePlace(placeId: placeId)))
+        print("📝 Remove place: \(placeId). Total pending: \(pendingChanges.count)")
     }
 
     private func loadReplacementAlternatives(for placeId: String) async {
@@ -445,6 +456,11 @@ final class AIStudioViewModel: ObservableObject {
     func applyChanges() async {
         guard hasChanges else { return }
 
+        print("🚀 Applying \(pendingChanges.count) pending changes to server")
+        for (i, change) in pendingChanges.enumerated() {
+            print("   Change \(i+1): \(change.type)")
+        }
+
         isApplying = true
         errorMessage = nil
 
@@ -453,7 +469,22 @@ final class AIStudioViewModel: ObservableObject {
             serverState = newState
             pendingChanges.removeAll()
             syncLocalStateFromServer()
+
+            print("✅ Changes applied successfully")
+
+            // Notify parent to refresh itinerary
+            if let onChangesApplied = onChangesApplied {
+                print("🔄 Calling onChangesApplied callback to refresh itinerary")
+                await onChangesApplied()
+            } else {
+                print("⚠️ No onChangesApplied callback set")
+            }
+
+            // Success - trigger dismiss after a short delay
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            shouldDismiss = true
         } catch {
+            print("❌ Failed to apply changes: \(error)")
             errorMessage = "Не удалось применить изменения: \(error.localizedDescription)"
         }
 

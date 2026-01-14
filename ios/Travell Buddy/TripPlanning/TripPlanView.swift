@@ -859,12 +859,20 @@ extension TripPlanView {
         guard let plan = viewModel.plan else { return }
 
         // Open AI Studio instead of legacy EditDayView
-        aiStudioViewModel = AIStudioViewModel(
+        let studioViewModel = AIStudioViewModel(
             tripId: plan.tripId,
             dayId: day.index,
             cityName: plan.destinationCity,
             dayDate: day.date
         )
+
+        // Set callback to refresh itinerary when changes are applied
+        studioViewModel.onChangesApplied = { [weak viewModel] in
+            print("🔄 AI Studio changes applied - refreshing itinerary")
+            _ = await viewModel?.refreshItinerary()
+        }
+
+        aiStudioViewModel = studioViewModel
         isShowingAIStudio = true
     }
 
