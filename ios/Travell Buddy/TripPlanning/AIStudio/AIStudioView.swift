@@ -44,6 +44,11 @@ struct AIStudioView: View {
                 set: { viewModel.updateEndTime($0) }
             ))
         }
+        .onChange(of: viewModel.shouldDismiss) { shouldDismiss in
+            if shouldDismiss {
+                dismiss()
+            }
+        }
     }
 
     // MARK: - Background
