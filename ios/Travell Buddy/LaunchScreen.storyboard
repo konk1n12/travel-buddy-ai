@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="13122.16" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="BYZ-38-t0r">
+    <dependencies>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="13104.12"/>
+        <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <scenes>
+        <!--Launch Screen-->
+        <scene sceneID="x0m-fh-Yq1">
+            <objects>
+                <viewController id="BYZ-38-t0r" sceneMemberID="viewController">
+                    <view key="view" contentMode="scaleToFill" id="8bC-Xf-vdC">
+                        <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <subviews>
+                            <imageView clipsSubviews="YES" contentMode="scaleAspectFill" translatesAutoresizingMaskIntoConstraints="NO" image="launch_map_dark_paris" id="x6Q-n6-Z7Z">
+                                <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                            </imageView>
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="fQ5-5E-tfZ">
+                                <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                                <color key="backgroundColor" red="0.0" green="0.0" blue="0.0" alpha="0.52" colorSpace="custom" customColorSpace="sRGB"/>
+                            </view>
+                            <stackView opaque="NO" contentMode="scaleToFill" axis="vertical" alignment="center" spacing="14" translatesAutoresizingMaskIntoConstraints="NO" id="66B-WG-8E8">
+                                <rect key="frame" x="86.5" y="301" width="220" height="250"/>
+                                <subviews>
+                                    <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="g3M-WV-Wi9">
+                                        <rect key="frame" x="50" y="0.0" width="120" height="120"/>
+                                        <subviews>
+                                            <imageView clipsSubviews="YES" contentMode="scaleAspectFill" translatesAutoresizingMaskIntoConstraints="NO" image="launch_logo_glass" id="L0G-1G-Sc1">
+                                                <rect key="frame" x="0.0" y="0.0" width="120" height="120"/>
+                                            </imageView>
+                                            <imageView contentMode="scaleAspectFit" translatesAutoresizingMaskIntoConstraints="NO" image="mappin.circle.fill" catalog="system" id="k5f-7W-GtH">
+                                                <rect key="frame" x="33" y="33" width="54" height="54"/>
+                                                <color key="tintColor" red="1" green="0.478" blue="0.184" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                            </imageView>
+                                        </subviews>
+                                        <constraints>
+                                            <constraint firstAttribute="height" constant="120" id="M5o-n8-9J4"/>
+                                            <constraint firstAttribute="width" constant="120" id="lqP-3I-3vJ"/>
+                                            <constraint firstItem="L0G-1G-Sc1" firstAttribute="top" secondItem="g3M-WV-Wi9" secondAttribute="top" id="cLo-Top"/>
+                                            <constraint firstItem="L0G-1G-Sc1" firstAttribute="bottom" secondItem="g3M-WV-Wi9" secondAttribute="bottom" id="cLo-Bot"/>
+                                            <constraint firstItem="L0G-1G-Sc1" firstAttribute="leading" secondItem="g3M-WV-Wi9" secondAttribute="leading" id="cLo-Lea"/>
+                                            <constraint firstItem="L0G-1G-Sc1" firstAttribute="trailing" secondItem="g3M-WV-Wi9" secondAttribute="trailing" id="cLo-Tra"/>
+                                            <constraint firstItem="k5f-7W-GtH" firstAttribute="centerX" secondItem="g3M-WV-Wi9" secondAttribute="centerX" id="y5e-0Q-vMD"/>
+                                            <constraint firstItem="k5f-7W-GtH" firstAttribute="centerY" secondItem="g3M-WV-Wi9" secondAttribute="centerY" id="oVn-9s-wLr"/>
+                                            <constraint firstItem="k5f-7W-GtH" firstAttribute="height" constant="54" id="A7H-5T-Zu0"/>
+                                            <constraint firstItem="k5f-7W-GtH" firstAttribute="width" constant="54" id="tPp-2C-u2f"/>
+                                        </constraints>
+                                    </view>
+                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="Travel Buddy" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="0uG-Jc-qJt">
+                                        <rect key="frame" x="19" y="134" width="182" height="43"/>
+                                        <fontDescription key="fontDescription" type="system" weight="heavy" pointSize="36"/>
+                                        <color key="textColor" red="1" green="1" blue="1" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                    </label>
+                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="Твой умный тревел-приятель" textAlignment="center" lineBreakMode="wordWrap" numberOfLines="2" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="bB3-zg-1yU">
+                                        <rect key="frame" x="6" y="191" width="208" height="45"/>
+                                        <fontDescription key="fontDescription" type="system" weight="medium" pointSize="17"/>
+                                        <color key="textColor" red="1" green="1" blue="1" alpha="0.75" colorSpace="custom" customColorSpace="sRGB"/>
+                                    </label>
+                                </subviews>
+                            </stackView>
+                            <stackView opaque="NO" contentMode="scaleToFill" axis="vertical" alignment="fill" spacing="10" translatesAutoresizingMaskIntoConstraints="NO" id="kVR-25-yTc">
+                                <rect key="frame" x="32" y="759" width="329" height="61"/>
+                                <subviews>
+                                    <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="Планируем ваше следующее путешествие…" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="lC1-3S-HAn">
+                                        <rect key="frame" x="0.0" y="0.0" width="329" height="18"/>
+                                        <fontDescription key="fontDescription" type="system" weight="medium" pointSize="15"/>
+                                        <color key="textColor" red="1" green="1" blue="1" alpha="0.85" colorSpace="custom" customColorSpace="sRGB"/>
+                                    </label>
+                                    <imageView contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" image="launch_progress_bar" id="CSQ-cm-WYw">
+                                        <rect key="frame" x="0.0" y="28" width="329" height="6"/>
+                                        <constraints>
+                                            <constraint firstAttribute="height" constant="6" id="ZCB-sA-Y9f"/>
+                                        </constraints>
+                                    </imageView>
+                                </subviews>
+                            </stackView>
+                        </subviews>
+                        <viewLayoutGuide key="safeArea" id="6Tk-OE-BBY"/>
+                        <constraints>
+                            <constraint firstItem="x6Q-n6-Z7Z" firstAttribute="top" secondItem="8bC-Xf-vdC" secondAttribute="top" id="0sH-Pp-IYB"/>
+                            <constraint firstItem="x6Q-n6-Z7Z" firstAttribute="bottom" secondItem="8bC-Xf-vdC" secondAttribute="bottom" id="CsY-Zf-eZV"/>
+                            <constraint firstItem="x6Q-n6-Z7Z" firstAttribute="leading" secondItem="8bC-Xf-vdC" secondAttribute="leading" id="GfL-m9-PRA"/>
+                            <constraint firstItem="x6Q-n6-Z7Z" firstAttribute="trailing" secondItem="8bC-Xf-vdC" secondAttribute="trailing" id="z1M-b2-t8h"/>
+
+                            <constraint firstItem="fQ5-5E-tfZ" firstAttribute="top" secondItem="8bC-Xf-vdC" secondAttribute="top" id="YtR-fy-xqB"/>
+                            <constraint firstItem="fQ5-5E-tfZ" firstAttribute="bottom" secondItem="8bC-Xf-vdC" secondAttribute="bottom" id="tZB-sG-q2g"/>
+                            <constraint firstItem="fQ5-5E-tfZ" firstAttribute="leading" secondItem="8bC-Xf-vdC" secondAttribute="leading" id="kUh-6K-pQc"/>
+                            <constraint firstItem="fQ5-5E-tfZ" firstAttribute="trailing" secondItem="8bC-Xf-vdC" secondAttribute="trailing" id="wRs-vM-D6f"/>
+
+                            <constraint firstItem="66B-WG-8E8" firstAttribute="centerX" secondItem="8bC-Xf-vdC" secondAttribute="centerX" id="M5q-X4-1ly"/>
+                            <constraint firstItem="66B-WG-8E8" firstAttribute="centerY" secondItem="8bC-Xf-vdC" secondAttribute="centerY" id="XlM-5b-j5P"/>
+
+                            <constraint firstItem="kVR-25-yTc" firstAttribute="leading" secondItem="6Tk-OE-BBY" secondAttribute="leading" constant="32" id="4mL-Xm-OPi"/>
+                            <constraint firstItem="kVR-25-yTc" firstAttribute="trailing" secondItem="6Tk-OE-BBY" secondAttribute="trailing" constant="-32" id="K0u-oD-hnx"/>
+                            <constraint firstItem="kVR-25-yTc" firstAttribute="bottom" secondItem="6Tk-OE-BBY" secondAttribute="bottom" constant="-32" id="o8N-x6-qk4"/>
+                        </constraints>
+                        <color key="backgroundColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                    </view>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="dkx-z0-nzr" sceneMemberID="firstResponder"/>
+            </objects>
+        </scene>
+    </scenes>
+    <resources>
+        <image name="launch_map_dark_paris" width="1400" height="3040"/>
+        <image name="launch_logo_glass" width="240" height="240"/>
+        <image name="launch_progress_bar" width="400" height="10"/>
+        <image name="mappin.circle.fill" catalog="system"/>
+    </resources>
+</document>

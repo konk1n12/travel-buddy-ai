@@ -19,6 +19,7 @@ struct TripResponseDTO: Codable {
     let dailyRoutine: DailyRoutineResponseDTO?
     let hotelLocation: String?
     let additionalPreferences: [String: String]?
+    let cityPhotoReference: String?
     let createdAt: String
     let updatedAt: String
 
@@ -34,6 +35,7 @@ struct TripResponseDTO: Codable {
         case dailyRoutine = "daily_routine"
         case hotelLocation = "hotel_location"
         case additionalPreferences = "additional_preferences"
+        case cityPhotoReference = "city_photo_reference"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }

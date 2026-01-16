@@ -10,12 +10,35 @@ import GoogleSignIn
 import UIKit
 
 /// Главная точка входа в приложение Travel Buddy.
-/// Показывает splash-экран, затем основное приложение с таб-баром.
+/// Показывает splash-экран, затем RootView с auth-gate.
 @main
 struct Travell_BuddyApp: App {
     @State private var showSplash: Bool = true
 
     init() {
+        configureTabBarAppearance()
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            Group {
+                if showSplash {
+                    SplashView {
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            showSplash = false
+                        }
+                    }
+                } else {
+                    RootView()
+                }
+            }
+            .onOpenURL { url in
+                GIDSignIn.sharedInstance.handle(url)
+            }
+        }
+    }
+
+    private func configureTabBarAppearance() {
         let tabBarAppearance = UITabBarAppearance()
         tabBarAppearance.configureWithOpaqueBackground()
         tabBarAppearance.backgroundColor = UIColor(red: 0.14, green: 0.14, blue: 0.13, alpha: 1.0)
@@ -33,24 +56,5 @@ struct Travell_BuddyApp: App {
 
         UITabBar.appearance().standardAppearance = tabBarAppearance
         UITabBar.appearance().scrollEdgeAppearance = tabBarAppearance
-    }
-
-    var body: some Scene {
-        WindowGroup {
-            Group {
-                if showSplash {
-                    SplashView {
-                        withAnimation(.easeInOut(duration: 0.35)) {
-                            showSplash = false
-                        }
-                    }
-                } else {
-                    MainTabView()
-                }
-            }
-            .onOpenURL { url in
-                GIDSignIn.sharedInstance.handle(url)
-            }
-        }
     }
 }

@@ -251,6 +251,129 @@ async def fetch_place_details(place_id: str) -> PlaceDetails:
     )
 
 
+_SCENIC_TYPES = {
+    "tourist_attraction",
+    "point_of_interest",
+    "natural_feature",
+    "park",
+    "museum",
+    "church",
+    "art_gallery",
+    "stadium",
+}
+
+
+def _score_city_photo(photo: dict, place_types: list[str]) -> int:
+    width = photo.get("width") or 0
+    height = photo.get("height") or 0
+    if not width or not height:
+        return 0
+
+    score = width * height
+    if width >= height:
+        score = int(score * 1.1)
+    if any(place_type in _SCENIC_TYPES for place_type in place_types):
+        score = int(score * 1.15)
+    return score
+
+
+def _pick_best_photo_reference(results: list[dict]) -> tuple[Optional[str], int]:
+    best_reference = None
+    best_score = 0
+
+    for result in results:
+        place_types = result.get("types") or []
+        for photo in result.get("photos") or []:
+            reference = photo.get("photo_reference")
+            if not reference:
+                continue
+            score = _score_city_photo(photo, place_types)
+            if score > best_score:
+                best_score = score
+                best_reference = reference
+
+    if best_reference:
+        return best_reference, best_score
+
+    for result in results:
+        for photo in result.get("photos") or []:
+            reference = photo.get("photo_reference")
+            if reference:
+                return reference, 1
+
+    return None, 0
+
+
+async def fetch_city_photo_reference(city_name: str) -> Optional[str]:
+    """
+    Fetch a photo reference for a city using Google Places Text Search.
+
+    Runs multiple scenic-oriented queries and picks the best available photo
+    (largest, landscape-leaning, scenic-type).
+    """
+    if not settings.google_maps_api_key:
+        print("⚠️ Google Maps API key not configured, skipping city photo fetch")
+        return None
+
+    queries = [
+        {"query": f"{city_name} skyline"},
+        {"query": f"{city_name} landmarks", "type": "tourist_attraction"},
+        {"query": f"{city_name} city", "type": "locality"},
+    ]
+
+    print(f"🌐 Google Places API: Fetching city photo for '{city_name}'")
+    best_reference = None
+    best_score = 0
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.google_places_timeout_seconds) as client:
+            for query_params in queries:
+                params = {
+                    "query": query_params["query"],
+                    "key": settings.google_maps_api_key,
+                    "language": settings.google_places_default_language,
+                }
+                if query_params.get("type"):
+                    params["type"] = query_params["type"]
+
+                response = await client.get(
+                    "https://maps.googleapis.com/maps/api/place/textsearch/json",
+                    params=params
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                status = data.get("status")
+                if status != "OK":
+                    continue
+
+                results = data.get("results", [])
+                if not results:
+                    continue
+
+                candidate_reference, candidate_score = _pick_best_photo_reference(results)
+                if candidate_reference and candidate_score > best_score:
+                    best_reference = candidate_reference
+                    best_score = candidate_score
+
+        if best_reference:
+            print(f"✅ Google Places API: Found scenic photo for '{city_name}'")
+            return best_reference
+
+        print(f"⚠️ Google Places API: No photos for city '{city_name}'")
+        return None
+
+    except httpx.TimeoutException:
+        print(f"❌ Google Places API: Timeout fetching city photo for '{city_name}'")
+        return None
+    except httpx.HTTPStatusError as e:
+        print(f"❌ Google Places API: HTTP {e.response.status_code} for city '{city_name}'")
+        return None
+    except Exception as e:
+        print(f"❌ Google Places API: Error fetching city photo for '{city_name}': {type(e).__name__}: {e}")
+        return None
+
+
 async def fetch_place_photo(photo_reference: str, max_width: int = 1200) -> bytes:
     if not settings.google_maps_api_key:
         raise RuntimeError("Google Maps API key is not configured")

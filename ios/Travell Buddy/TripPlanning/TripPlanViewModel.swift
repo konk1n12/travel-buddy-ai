@@ -327,4 +327,56 @@ final class TripPlanViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Local Activity Replacement (UX-only, no backend)
+
+    /// Replace an activity at a specific position with a new one.
+    /// This is a local-only operation for the "Replace place" UX flow.
+    @MainActor
+    func replaceActivity(at dayIndex: Int, activityIndex: Int, with newActivity: TripActivity) {
+        guard var currentPlan = plan,
+              dayIndex >= 0,
+              dayIndex < currentPlan.days.count,
+              activityIndex >= 0,
+              activityIndex < currentPlan.days[dayIndex].activities.count else {
+            return
+        }
+
+        // Create a mutable copy of the day's activities
+        var updatedActivities = currentPlan.days[dayIndex].activities
+        updatedActivities[activityIndex] = newActivity
+
+        // Create a new TripDay with the updated activities
+        let updatedDay = TripDay(
+            index: currentPlan.days[dayIndex].index,
+            date: currentPlan.days[dayIndex].date,
+            title: currentPlan.days[dayIndex].title,
+            summary: currentPlan.days[dayIndex].summary,
+            activities: updatedActivities
+        )
+
+        // Create a mutable copy of the days array
+        var updatedDays = currentPlan.days
+        updatedDays[dayIndex] = updatedDay
+
+        // Create a new TripPlan with the updated days
+        let updatedPlan = TripPlan(
+            tripId: currentPlan.tripId,
+            destinationCity: currentPlan.destinationCity,
+            startDate: currentPlan.startDate,
+            endDate: currentPlan.endDate,
+            days: updatedDays,
+            travellersCount: currentPlan.travellersCount,
+            comfortLevel: currentPlan.comfortLevel,
+            interestsSummary: currentPlan.interestsSummary,
+            tripSummary: currentPlan.tripSummary,
+            isLocked: currentPlan.isLocked,
+            cityPhotoReference: currentPlan.cityPhotoReference
+        )
+
+        // Update the plan
+        self.plan = updatedPlan
+
+        print("🔄 Activity replaced at day \(dayIndex), position \(activityIndex): \(newActivity.title)")
+    }
+
 }

@@ -9,6 +9,8 @@ import SwiftUI
 
 struct TripPlanView: View {
     @ObservedObject var viewModel: TripPlanViewModel
+    @StateObject private var replaceManager = ReplacePlaceManager()
+    @StateObject private var gatingManager = AuthGatingManager.shared
     @State private var isShowingGuide: Bool = false
     @State private var isShowingEditDay: Bool = false
     @State private var isShowingAIStudio: Bool = false
@@ -20,6 +22,7 @@ struct TripPlanView: View {
     @State private var showPaywall: Bool = false
     @State private var paywallError: String?
     @State private var isMapInteracting: Bool = false
+    @State private var replaceSheetActivity: TripActivity?
     @Environment(\.dismiss) private var dismiss
     private let ctaHeight: CGFloat = 72
 
@@ -47,7 +50,8 @@ struct TripPlanView: View {
                 .onAppear {
                     print("📱 TripPlanView appeared with plan for city: \(plan.destinationCity)")
                     print("📱 Days count: \(plan.days.count)")
-                    print("📱 Photo URL: \(String(describing: photoURL(for: plan.destinationCity)))")
+                    print("📱 City Photo Reference: \(plan.cityPhotoReference ?? "nil")")
+                    print("📱 Photo URL: \(String(describing: cityPhotoURL(for: plan)))")
                     print("📱 Selected tab: \(viewModel.selectedTab)")
                 }
                 .safeAreaInset(edge: .bottom) {
@@ -117,7 +121,7 @@ struct TripPlanView: View {
         }
         .sheet(isPresented: $showPaywall) {
             PaywallView(
-                errorMessage: paywallError,
+                subtitle: paywallError,
                 onAuthSuccess: {
                     handleAuthSuccess()
                 }
@@ -146,6 +150,45 @@ struct TripPlanView: View {
                     .presentationCornerRadius(28)
             }
         }
+        .sheet(item: $replaceSheetActivity) { activity in
+            ReplaceOptionsBottomSheet(
+                currentActivityTitle: activity.title,
+                dayIndex: viewModel.selectedDayIndex,
+                stopIndex: findStopIndex(for: activity),
+                options: replaceManager.currentOptions,
+                onSelect: { option in
+                    replaceManager.selectOption(option) { activityId, selectedOption in
+                        replaceActivity(activityId: activityId, with: selectedOption)
+                    }
+                    replaceSheetActivity = nil
+                },
+                onCancel: {
+                    replaceManager.cancel()
+                    replaceSheetActivity = nil
+                }
+            )
+            .presentationDetents([.fraction(0.85), .large])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(28)
+            .presentationBackground(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.14, green: 0.08, blue: 0.06),
+                        Color(red: 0.10, green: 0.06, blue: 0.04)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+        }
+        .onChange(of: replaceManager.state) { newState in
+            // When state transitions to selecting, show the sheet
+            if case .selecting(let activityId, _) = newState {
+                if let activity = findActivity(by: activityId) {
+                    replaceSheetActivity = activity
+                }
+            }
+        }
         .onChange(of: isShowingEditDay) { newValue in
             if !newValue {
                 editViewModel = nil
@@ -159,6 +202,23 @@ struct TripPlanView: View {
         .onChange(of: isShowingChat) { newValue in
             if !newValue {
                 chatViewModel = nil
+            }
+        }
+        // Auth gating modal for locked features (Map, Days 2+)
+        .sheet(isPresented: $gatingManager.isAuthModalPresented) {
+            PaywallView(
+                subtitle: gatingManager.gatingMessage,
+                dayNumber: gatingManager.pendingAction?.dayNumber,
+                onAuthSuccess: {
+                    gatingManager.handleAuthSuccess()
+                }
+            )
+            .interactiveDismissDisabled(false)
+            .onDisappear {
+                // If modal dismissed without auth, cancel pending action
+                if !AuthManager.shared.isAuthenticated {
+                    gatingManager.cancelPendingAction()
+                }
             }
         }
     }
@@ -184,7 +244,7 @@ struct TripPlanView: View {
 
     private func heroSection(plan: TripPlan) -> some View {
         let heroHeight: CGFloat = max(280, UIScreen.main.bounds.height * 0.42)
-        let imageURL = photoURL(for: plan.destinationCity)
+        let imageURL = cityPhotoURL(for: plan)
 
         return ZStack(alignment: .top) {
             ZStack(alignment: .bottomLeading) {
@@ -192,7 +252,6 @@ struct TripPlanView: View {
                     RemoteImageView(url: imageURL)
                         .frame(maxWidth: .infinity)
                         .frame(height: heroHeight)
-                        .clipped()
                 } else {
                     LinearGradient(
                         colors: [
@@ -250,27 +309,22 @@ struct TripPlanView: View {
             }
         }
         .frame(height: heroHeight)
-        .clipped()
     }
 
     private var tabSwitcher: some View {
         HStack(spacing: 6) {
-            segmentButton(title: "Обзор", isSelected: viewModel.selectedTab == .overview) {
+            segmentButton(title: "Обзор", isSelected: viewModel.selectedTab == .overview, isLocked: false) {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     viewModel.selectedTab = .overview
                 }
             }
-            segmentButton(title: "Маршрут", isSelected: viewModel.selectedTab == .route) {
+            segmentButton(title: "Маршрут", isSelected: viewModel.selectedTab == .route, isLocked: false) {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     viewModel.selectedTab = .route
                 }
             }
-            segmentButton(title: "Карта", isSelected: viewModel.selectedTab == .map) {
-                if viewModel.plan?.isLocked == true {
-                    paywallError = "Карта доступна после входа"
-                    viewModel.pendingIntent = .openMap
-                    viewModel.isShowingPaywall = true
-                } else {
+            segmentButton(title: "Карта", isSelected: viewModel.selectedTab == .map, isLocked: gatingManager.isMapLocked()) {
+                gatingManager.requireAuth(for: .viewMap) {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         viewModel.selectedTab = .map
                     }
@@ -319,11 +373,11 @@ struct TripPlanView: View {
         VStack(spacing: 14) {
             daySelector(plan: plan)
 
-            if plan.isLocked {
+            if gatingManager.isMapLocked() {
                 LockedMapView {
-                    paywallError = "Карта доступна после входа"
-                    viewModel.pendingIntent = .openMap
-                    viewModel.isShowingPaywall = true
+                    gatingManager.requireAuth(for: .viewMap) {
+                        // Map will be shown after auth success
+                    }
                 }
                 .frame(height: 360)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -343,17 +397,24 @@ struct TripPlanView: View {
         }
     }
 
-    private func segmentButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func segmentButton(title: String, isSelected: Bool, isLocked: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(isSelected ? .white : Color.white.opacity(0.55))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule()
-                        .fill(isSelected ? Color.travelBuddyOrange : Color.clear)
-                )
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.55))
+                if isLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(isSelected ? .white.opacity(0.7) : Color.white.opacity(0.4))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                Capsule()
+                    .fill(isSelected ? Color.travelBuddyOrange : Color.clear)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -398,7 +459,8 @@ struct TripPlanView: View {
             guard let date = Calendar.current.date(byAdding: .day, value: dayNumber - 1, to: plan.startDate) else {
                 return nil
             }
-            let isLocked = plan.isLocked && dayNumber > 1
+            // Day 1 (dayNumber == 1) is always unlocked, Days 2+ require auth for guests
+            let isLocked = gatingManager.isDayLocked(dayIndex: dayNumber - 1)
             return DayTabItem(id: dayNumber, date: date, isLocked: isLocked)
         }
 
@@ -407,27 +469,36 @@ struct TripPlanView: View {
                 ForEach(dayTabs) { day in
                     let isSelected = day.id - 1 == viewModel.selectedDayIndex
                     Button {
+                        let dayIndex = day.id - 1
                         if day.isLocked {
-                            paywallError = "Полные дни доступны после входа"
-                            viewModel.pendingIntent = .openDay(day.id)
-                            viewModel.isShowingPaywall = true
+                            // Use gating manager for Day 2+
+                            gatingManager.requireAuth(for: .viewDay(dayIndex: dayIndex)) {
+                                viewModel.selectedDayIndex = dayIndex
+                            }
                         } else {
-                            viewModel.selectedDayIndex = day.id - 1
+                            viewModel.selectedDayIndex = dayIndex
                         }
                     } label: {
-                        Text("День \(day.id)")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(isSelected ? Color.travelBuddyOrange : Color.white.opacity(0.6))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? Color.travelBuddyOrange.opacity(0.15) : Color(red: 0.20, green: 0.20, blue: 0.22).opacity(0.7))
-                                    .overlay(
-                                        Capsule()
-                                            .stroke(isSelected ? Color.travelBuddyOrange : Color.clear, lineWidth: 1.2)
-                                    )
-                            )
+                        HStack(spacing: 4) {
+                            Text("День \(day.id)")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(isSelected ? Color.travelBuddyOrange : Color.white.opacity(0.6))
+                            if day.isLocked {
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .foregroundColor(isSelected ? Color.travelBuddyOrange.opacity(0.7) : Color.white.opacity(0.4))
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule()
+                                .fill(isSelected ? Color.travelBuddyOrange.opacity(0.15) : Color(red: 0.20, green: 0.20, blue: 0.22).opacity(0.7))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(isSelected ? Color.travelBuddyOrange : Color.clear, lineWidth: 1.2)
+                                )
+                        )
                     }
                     .buttonStyle(.plain)
                 }
@@ -473,12 +544,11 @@ struct TripPlanView: View {
     private func activityTimeline(activities: [TripActivity]) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             ForEach(Array(activities.enumerated()), id: \.element.id) { index, activity in
-                Button {
-                    selectedPlace = Place(from: activity)
-                } label: {
-                    activityRow(activity: activity, isLast: index == activities.count - 1)
-                }
-                .buttonStyle(.plain)
+                activityRowWithReplace(
+                    activity: activity,
+                    stopIndex: index,
+                    isLast: index == activities.count - 1
+                )
             }
         }
     }
@@ -708,7 +778,21 @@ struct TripPlanView: View {
         }
     }
 
-    private func photoURL(for city: String) -> URL? {
+    private func cityPhotoURL(for plan: TripPlan) -> URL? {
+        // Priority 1: Use city photo reference from backend (Google Places)
+        if let photoRef = plan.cityPhotoReference, !photoRef.isEmpty {
+            // URL-encode the photo reference to handle special characters
+            let encodedRef = photoRef.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? photoRef
+            let urlString = "\(AppConfig.baseURL)/places/photos/\(encodedRef)?max_width=1200"
+            print("📸 Using backend city photo: \(urlString)")
+            return URL(string: urlString)
+        }
+
+        // Priority 2: Fallback to hardcoded Unsplash photos for known cities
+        return fallbackPhotoURL(for: plan.destinationCity)
+    }
+
+    private func fallbackPhotoURL(for city: String) -> URL? {
         let mapped: [String: String] = [
             "Париж": "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?fit=crop&w=1200&q=80&fm=jpg",
             "Paris": "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?fit=crop&w=1200&q=80&fm=jpg",
@@ -933,6 +1017,104 @@ extension TripPlanView {
                     viewModel.selectedTab = .map
                 }
             }
+        }
+    }
+
+    // MARK: - Replace Place Flow
+
+    private func activityRowWithReplace(activity: TripActivity, stopIndex: Int, isLast: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(activity.time)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white.opacity(0.7))
+                .frame(width: 54, alignment: .leading)
+
+            timelineIndicator(isLast: isLast, color: color(for: activity.category))
+
+            ActivityCardWithReplace(
+                activity: activity,
+                dayIndex: viewModel.selectedDayIndex,
+                stopIndex: stopIndex,
+                isFinding: replaceManager.isActivityFinding(activity.id),
+                showReplacedBadge: replaceManager.recentlyReplacedActivityId == activity.id,
+                onTapCard: {
+                    selectedPlace = Place(from: activity)
+                },
+                onTapReplace: {
+                    handleReplaceTap(for: activity, stopIndex: stopIndex)
+                }
+            )
+        }
+    }
+
+    private func handleReplaceTap(for activity: TripActivity, stopIndex: Int) {
+        // If already finding for this activity, cancel it
+        if replaceManager.isActivityFinding(activity.id) {
+            replaceManager.cancel()
+            return
+        }
+
+        // Start the replace flow
+        replaceManager.startReplace(
+            for: activity,
+            dayIndex: viewModel.selectedDayIndex,
+            stopIndex: stopIndex
+        )
+    }
+
+    private func findActivity(by id: UUID) -> TripActivity? {
+        guard let plan = viewModel.plan else { return nil }
+        for day in plan.days {
+            if let activity = day.activities.first(where: { $0.id == id }) {
+                return activity
+            }
+        }
+        return nil
+    }
+
+    private func findStopIndex(for activity: TripActivity) -> Int? {
+        guard let plan = viewModel.plan,
+              let day = plan.days[safe: viewModel.selectedDayIndex] else {
+            return nil
+        }
+        return day.activities.firstIndex(where: { $0.id == activity.id })
+    }
+
+    private func replaceActivity(activityId: UUID, with option: ReplacementOption) {
+        guard let plan = viewModel.plan,
+              let dayIndex = plan.days.firstIndex(where: { day in
+                  day.activities.contains(where: { $0.id == activityId })
+              }),
+              let activityIndex = plan.days[dayIndex].activities.firstIndex(where: { $0.id == activityId }) else {
+            return
+        }
+
+        // Get the original activity to preserve time and travel info
+        let original = plan.days[dayIndex].activities[activityIndex]
+
+        // Create the replacement activity
+        let replacement = TripActivity(
+            id: UUID(), // New ID for the replacement
+            time: original.time,
+            endTime: original.endTime,
+            title: option.title,
+            description: option.address ?? option.subtitle,
+            category: option.category,
+            address: option.address,
+            note: nil,
+            latitude: option.latitude,
+            longitude: option.longitude,
+            travelPolyline: original.travelPolyline,
+            rating: option.rating,
+            tags: option.tags,
+            poiId: option.poiId,
+            travelTimeMinutes: original.travelTimeMinutes,
+            travelDistanceMeters: original.travelDistanceMeters
+        )
+
+        // Update the plan with the replacement (with crossfade animation)
+        withAnimation(.easeInOut(duration: 0.3)) {
+            viewModel.replaceActivity(at: dayIndex, activityIndex: activityIndex, with: replacement)
         }
     }
 }

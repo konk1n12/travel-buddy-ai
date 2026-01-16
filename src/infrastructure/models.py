@@ -41,6 +41,8 @@ class TripModel(Base):
     additional_preferences: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     structured_preferences: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSON, nullable=True, default=[])
 
+    city_photo_reference: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

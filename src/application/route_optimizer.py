@@ -1415,7 +1415,11 @@ Return JSON only:
             ValueError: If trip not found or required plans missing
         """
         # 1. Load trip spec
-        trip_spec = await self.trip_spec_collector.get_trip(trip_id, db)
+        trip_spec = await self.trip_spec_collector.get_trip(
+            trip_id,
+            db,
+            refresh_city_photo=True,
+        )
         if not trip_spec:
             raise ValueError(f"Trip {trip_id} not found")
 
@@ -1647,6 +1651,7 @@ Return JSON only:
             trip_id=trip_id,
             days=itinerary_days,
             created_at=created_at.isoformat() + "Z",
+            city_photo_reference=trip_spec.city_photo_reference,
         )
 
     async def generate_agentic_itinerary(
@@ -1662,7 +1667,11 @@ Return JSON only:
         logger.warning(f"🚀🚀🚀 generate_agentic_itinerary STARTED for trip {trip_id}")
 
         # 1. Load trip spec
-        trip_spec = await self.trip_spec_collector.get_trip(trip_id, db)
+        trip_spec = await self.trip_spec_collector.get_trip(
+            trip_id,
+            db,
+            refresh_city_photo=True,
+        )
         if not trip_spec:
             raise ValueError(f"Trip {trip_id} not found")
 
@@ -2027,6 +2036,7 @@ Return JSON only:
             trip_id=trip_id,
             days=itinerary_days,
             created_at=created_at.isoformat() + "Z",
+            city_photo_reference=trip_spec.city_photo_reference,
         )
 
     async def get_itinerary(
@@ -2066,6 +2076,14 @@ Return JSON only:
                 pois = sum(1 for b in blocks if b.get('poi'))
                 print(f"      Day {day.get('day_number')}: {len(blocks)} blocks, {pois} POIs")
 
+        # Load trip spec to get city_photo_reference
+        trip_spec = await self.trip_spec_collector.get_trip(
+            trip_id,
+            db,
+            refresh_city_photo=True,
+        )
+        city_photo_reference = trip_spec.city_photo_reference if trip_spec else None
+
         # Parse stored JSON back into ItineraryDay objects
         itinerary_days = [ItineraryDay(**day_data) for day_data in itinerary_model.days]
 
@@ -2074,6 +2092,7 @@ Return JSON only:
             days=itinerary_days,
             created_at=itinerary_model.itinerary_created_at.isoformat() + "Z"
             if itinerary_model.itinerary_created_at else datetime.utcnow().isoformat() + "Z",
+            city_photo_reference=city_photo_reference,
         )
 
     async def generate_smart_itinerary(

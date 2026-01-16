@@ -2,117 +2,95 @@
 //  PaywallView.swift
 //  Travell Buddy
 //
-//  Paywall modal shown for locked actions.
+//  Paywall modal shown for locked actions (e.g., viewing full itinerary).
+//  Uses AuthManager for consistent auth state management.
 //
 
 import SwiftUI
 import AuthenticationServices
 
 struct PaywallView: View {
-    let errorMessage: String?
+    let subtitle: String?
+    let dayNumber: Int?
+    let unlockedFeaturesLabel: String
+    let footerText: String
     let onAuthSuccess: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var authManager = AuthManager.shared
     @State private var isShowingEmailAuth: Bool = false
     @State private var isLoading: Bool = false
     @State private var errorText: String?
+    @State private var currentNonceHash: String = ""
+    @State private var activeProvider: ActiveAuthProvider?
 
-    private let authClient = AuthAPIClient()
-    private let googleAuthService = GoogleAuthService()
+    init(
+        subtitle: String? = nil,
+        dayNumber: Int? = nil,
+        unlockedFeaturesLabel: String = "карта + полные маршрут",
+        footerText: String = "Вход нужен, чтобы открыть карту и остальные дни",
+        onAuthSuccess: @escaping () -> Void
+    ) {
+        self.subtitle = subtitle
+        self.dayNumber = dayNumber
+        self.unlockedFeaturesLabel = unlockedFeaturesLabel
+        self.footerText = footerText
+        self.onAuthSuccess = onAuthSuccess
+    }
 
     var body: some View {
-        NavigationView {
-            VStack(spacing: 16) {
-                VStack(spacing: 8) {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 30, weight: .semibold))
-                        .foregroundColor(.orange)
-
-                    Text("Разблокируйте полный маршрут")
-                        .font(.system(size: 20, weight: .semibold))
-
-                    Text(errorMessage ?? "Доступно после входа")
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 16)
-                }
-
-                VStack(spacing: 12) {
-                    SignInWithAppleButton(.signIn) { request in
-                        request.requestedScopes = [.fullName, .email]
-                    } onCompletion: { result in
-                        handleAppleResult(result)
-                    }
-                    .signInWithAppleButtonStyle(.black)
-                    .frame(height: 48)
-                    .cornerRadius(12)
-
-                    Button {
-                        isShowingEmailAuth = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "envelope.fill")
-                            Text("Продолжить по email")
-                                .font(.system(size: 16, weight: .semibold))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .foregroundColor(.white)
-                        .background(Color(red: 0.15, green: 0.18, blue: 0.22))
-                        .cornerRadius(12)
-                    }
-
-                    Button {
-                        Task {
-                            await handleGoogleSignIn()
-                        }
-                    } label: {
-                        HStack {
-                            Image(systemName: "globe")
-                            Text("Продолжить с Google")
-                                .font(.system(size: 16, weight: .semibold))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .foregroundColor(.white)
-                        .background(Color(red: 0.25, green: 0.30, blue: 0.38))
-                        .cornerRadius(12)
-                    }
-                }
-                .padding(.top, 8)
-
-                if let errorText {
-                    Text(errorText)
-                        .font(.system(size: 13))
-                        .foregroundColor(.red)
-                        .multilineTextAlignment(.center)
-                }
-
-                Spacer()
-
-                if isLoading {
-                    ProgressView()
-                        .padding(.bottom, 12)
+        UnlockAuthSheetView(
+            dayNumber: dayNumber,
+            unlockedFeaturesLabel: unlockedFeaturesLabel,
+            subtitle: subtitle,
+            footerText: footerText,
+            isLoading: isLoading,
+            isAppleLoading: isLoading && activeProvider == .apple,
+            isGoogleLoading: isLoading && activeProvider == .google,
+            errorText: errorText,
+            onClose: {
+                errorText = nil
+                dismiss()
+            },
+            onAppleRequest: { request in
+                activeProvider = .apple
+                currentNonceHash = authManager.prepareAppleSignIn()
+                request.requestedScopes = [.fullName, .email]
+                request.nonce = currentNonceHash
+            },
+            onAppleCompletion: handleAppleResult,
+            onEmail: {
+                errorText = nil
+                isShowingEmailAuth = true
+            },
+            onGoogle: {
+                errorText = nil
+                activeProvider = .google
+                Task {
+                    await handleGoogleSignIn()
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Закрыть") {
-                        errorText = nil
-                        dismiss()
-                    }
-                }
-            }
-            .sheet(isPresented: $isShowingEmailAuth) {
-                EmailAuthView(
-                    onComplete: { session in
-                        storeSession(session)
-                        onAuthSuccess()
-                    }
-                )
+        )
+        .sheet(isPresented: $isShowingEmailAuth) {
+            PaywallEmailAuthView(onComplete: {
+                onAuthSuccess()
+            })
+        }
+        .onChange(of: authManager.state) { _, newState in
+            // React to auth state changes from AuthManager
+            switch newState {
+            case .loggedIn:
+                activeProvider = nil
+                onAuthSuccess()
+            case .error(let message):
+                errorText = message
+                isLoading = false
+                activeProvider = nil
+            case .loggingIn:
+                isLoading = true
+            default:
+                isLoading = false
+                activeProvider = nil
             }
         }
     }
@@ -120,119 +98,129 @@ struct PaywallView: View {
     private func handleAppleResult(_ result: Result<ASAuthorization, Error>) {
         switch result {
         case .success(let authorization):
-            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
-                  let tokenData = credential.identityToken,
-                  let token = String(data: tokenData, encoding: .utf8) else {
-                errorText = "Не удалось получить Apple токен"
-                return
-            }
-
-            let firstName = credential.fullName?.givenName
-            let lastName = credential.fullName?.familyName
-            isLoading = true
-
             Task {
-                do {
-                    let session = try await authClient.authenticateApple(
-                        idToken: token,
-                        firstName: firstName,
-                        lastName: lastName
-                    )
-                    await MainActor.run {
-                        storeSession(session)
-                        onAuthSuccess()
-                    }
-                } catch {
-                    await MainActor.run {
-                        errorText = (error as? LocalizedError)?.errorDescription ?? "Ошибка авторизации"
-                    }
-                }
-                await MainActor.run { isLoading = false }
+                await authManager.handleAppleAuthorization(authorization)
             }
         case .failure(let error):
-            errorText = error.localizedDescription
+            authManager.handleAppleError(error)
         }
     }
 
     @MainActor
     private func handleGoogleSignIn() async {
-        isLoading = true
-        errorText = nil
-
-        do {
-            let idToken = try await googleAuthService.signIn()
-            let session = try await authClient.authenticateGoogle(idToken: idToken)
-            storeSession(session)
-            onAuthSuccess()
-        } catch {
-            errorText = (error as? LocalizedError)?.errorDescription ?? "Не удалось войти через Google"
-        }
-
-        isLoading = false
-    }
-
-    private func storeSession(_ session: SessionResponseDTO) {
-        AuthSessionStore.shared.accessToken = session.accessToken
-        AuthSessionStore.shared.refreshToken = session.refreshToken
+        await authManager.signInWithGoogle()
     }
 }
 
-private struct EmailAuthView: View {
-    let onComplete: (SessionResponseDTO) -> Void
+private enum ActiveAuthProvider {
+    case apple
+    case google
+}
+
+// MARK: - Paywall Email Auth View
+
+private struct PaywallEmailAuthView: View {
+    let onComplete: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var authManager = AuthManager.shared
     @State private var email: String = ""
     @State private var code: String = ""
     @State private var challengeId: String?
     @State private var isLoading: Bool = false
     @State private var errorText: String?
-
-    private let authClient = AuthAPIClient()
+    @State private var resendCooldown: Int = 0
+    @State private var resendTimer: Timer?
 
     var body: some View {
         NavigationView {
             VStack(spacing: 16) {
-                Text(challengeId == nil ? "Введите email" : "Введите код из письма")
-                    .font(.system(size: 18, weight: .semibold))
+                // Header
+                VStack(spacing: 8) {
+                    Image(systemName: challengeId == nil ? "envelope.fill" : "lock.fill")
+                        .font(.system(size: 36, weight: .medium))
+                        .foregroundColor(.travelBuddyOrange)
 
+                    Text(challengeId == nil ? "Введите email" : "Введите код из письма")
+                        .font(.system(size: 18, weight: .semibold))
+
+                    if challengeId != nil {
+                        Text("Код отправлен на \(email)")
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.top, 16)
+
+                // Input field
                 if challengeId == nil {
                     TextField("email@example.com", text: $email)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                         .padding(12)
                         .background(Color(.secondarySystemBackground))
                         .cornerRadius(10)
                 } else {
-                    TextField("Код", text: $code)
+                    TextField("000000", text: $code)
                         .keyboardType(.numberPad)
-                        .textInputAutocapitalization(.never)
+                        .multilineTextAlignment(.center)
+                        .font(.system(size: 20, weight: .semibold, design: .monospaced))
                         .padding(12)
                         .background(Color(.secondarySystemBackground))
                         .cornerRadius(10)
+                        .onChange(of: code) { _, newValue in
+                            if newValue.count > 6 {
+                                code = String(newValue.prefix(6))
+                            }
+                            code = newValue.filter { $0.isNumber }
+                        }
                 }
 
                 if let errorText {
                     Text(errorText)
                         .font(.system(size: 13))
                         .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
                 }
 
+                // Primary action button
                 Button {
                     Task { await handlePrimaryAction() }
                 } label: {
-                    Text(challengeId == nil ? "Отправить код" : "Подтвердить")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color(red: 1.0, green: 0.45, blue: 0.35))
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
+                    Group {
+                        if isLoading {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Text(challengeId == nil ? "Отправить код" : "Подтвердить")
+                                .font(.system(size: 16, weight: .semibold))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .background(primaryButtonEnabled ? Color.travelBuddyOrange : Color.gray)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
                 }
-                .disabled(isLoading)
+                .disabled(!primaryButtonEnabled || isLoading)
 
-                if isLoading {
-                    ProgressView()
-                        .padding(.top, 4)
+                // Resend button
+                if challengeId != nil {
+                    Button {
+                        Task { await resendCode() }
+                    } label: {
+                        if resendCooldown > 0 {
+                            Text("Отправить повторно через \(resendCooldown) сек")
+                                .font(.system(size: 14))
+                                .foregroundColor(.gray)
+                        } else {
+                            Text("Отправить код повторно")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.travelBuddyOrange)
+                        }
+                    }
+                    .disabled(resendCooldown > 0 || isLoading)
                 }
 
                 Spacer()
@@ -242,27 +230,93 @@ private struct EmailAuthView: View {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Закрыть") { dismiss() }
                 }
+                if challengeId != nil {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Назад") {
+                            challengeId = nil
+                            code = ""
+                            errorText = nil
+                            stopResendTimer()
+                        }
+                    }
+                }
+            }
+        }
+        .onDisappear {
+            stopResendTimer()
+        }
+        .onChange(of: authManager.state) { _, newState in
+            if case .loggedIn = newState {
+                dismiss()
+                onComplete()
             }
         }
     }
 
+    private var primaryButtonEnabled: Bool {
+        if challengeId == nil {
+            return isValidEmail(email)
+        } else {
+            return code.count == 6
+        }
+    }
+
+    private func isValidEmail(_ email: String) -> Bool {
+        let emailRegex = #"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"#
+        return email.range(of: emailRegex, options: .regularExpression) != nil
+    }
+
+    @MainActor
     private func handlePrimaryAction() async {
         errorText = nil
         isLoading = true
 
         do {
             if challengeId == nil {
-                let response = try await authClient.startEmailAuth(email: email)
-                challengeId = response.challengeId
+                let challenge = try await authManager.requestEmailCode(email: email)
+                challengeId = challenge
+                startResendCooldown()
             } else if let challengeId {
-                let session = try await authClient.verifyEmailAuth(challengeId: challengeId, code: code)
-                onComplete(session)
-                dismiss()
+                await authManager.verifyEmailCode(challengeId: challengeId, code: code)
+                // State change handled by onChange
             }
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? "Ошибка авторизации"
         }
 
         isLoading = false
+    }
+
+    @MainActor
+    private func resendCode() async {
+        errorText = nil
+        isLoading = true
+
+        do {
+            let challenge = try await authManager.requestEmailCode(email: email)
+            challengeId = challenge
+            startResendCooldown()
+        } catch {
+            errorText = (error as? LocalizedError)?.errorDescription ?? "Не удалось отправить код"
+        }
+
+        isLoading = false
+    }
+
+    private func startResendCooldown() {
+        resendCooldown = 30
+        resendTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            if resendCooldown > 0 {
+                resendCooldown -= 1
+            } else {
+                stopResendTimer()
+            }
+        }
+    }
+
+    private func stopResendTimer() {
+        resendTimer?.invalidate()
+        resendTimer = nil
+        resendCooldown = 0
     }
 }

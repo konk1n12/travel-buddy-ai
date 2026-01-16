@@ -228,7 +228,7 @@ struct NewTripView: View {
         }
         .sheet(isPresented: $showPaywall) {
             PaywallView(
-                errorMessage: paywallError,
+                subtitle: paywallError,
                 onAuthSuccess: {
                     showPaywall = false
                     if let pendingRouteBuildingData {

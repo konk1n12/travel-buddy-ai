@@ -638,7 +638,11 @@ class SmartRouteOptimizer:
         7. Store and return itinerary
         """
         # 1. Load trip spec
-        trip_spec = await self.trip_spec_collector.get_trip(trip_id, db)
+        trip_spec = await self.trip_spec_collector.get_trip(
+            trip_id,
+            db,
+            refresh_city_photo=True,
+        )
         if not trip_spec:
             raise ValueError(f"Trip {trip_id} not found")
 
@@ -953,4 +957,5 @@ class SmartRouteOptimizer:
             trip_id=trip_id,
             days=itinerary_days,
             created_at=created_at.isoformat() + "Z",
+            city_photo_reference=trip_spec.city_photo_reference,
         )

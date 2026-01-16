@@ -13,6 +13,7 @@ struct ItineraryResponseDTO: Codable {
     let createdAt: String
     let tripSummary: String?  // Brief overview of the entire trip
     let isLocked: Bool?
+    let cityPhotoReference: String?  // Google Places photo reference for the destination city
 
     enum CodingKeys: String, CodingKey {
         case tripId = "trip_id"
@@ -20,6 +21,7 @@ struct ItineraryResponseDTO: Codable {
         case createdAt = "created_at"
         case tripSummary = "trip_summary"
         case isLocked = "is_locked"
+        case cityPhotoReference = "city_photo_reference"
     }
 }
 

@@ -50,7 +50,8 @@ extension ItineraryResponseDTO {
             comfortLevel: mapBudgetToComfortLevel(budget),
             interestsSummary: interestsSummary,
             tripSummary: tripSummary,
-            isLocked: isLocked ?? false
+            isLocked: isLocked ?? false,
+            cityPhotoReference: cityPhotoReference
         )
     }
 
@@ -83,7 +84,8 @@ extension ItineraryResponseDTO {
             comfortLevel: mapBudgetToComfortLevel(budget),
             interestsSummary: interestsSummary,
             tripSummary: tripSummary,
-            isLocked: serverIsLocked
+            isLocked: serverIsLocked,
+            cityPhotoReference: cityPhotoReference
         )
     }
 
@@ -101,7 +103,8 @@ extension ItineraryResponseDTO {
             comfortLevel: existingPlan.comfortLevel,
             interestsSummary: existingPlan.interestsSummary,
             tripSummary: tripSummary ?? existingPlan.tripSummary,
-            isLocked: isLocked ?? false
+            isLocked: isLocked ?? false,
+            cityPhotoReference: cityPhotoReference ?? existingPlan.cityPhotoReference
         )
     }
 

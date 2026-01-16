@@ -81,11 +81,13 @@ struct LogoutRequestDTO: Codable {
 
 struct AppleAuthRequestDTO: Codable {
     let idToken: String
+    let nonce: String?
     let firstName: String?
     let lastName: String?
 
     enum CodingKeys: String, CodingKey {
         case idToken = "id_token"
+        case nonce
         case firstName = "first_name"
         case lastName = "last_name"
     }

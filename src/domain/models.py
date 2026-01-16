@@ -92,6 +92,8 @@ class TripSpec(BaseModel):
     additional_preferences: dict = Field(default_factory=dict, description="Additional preferences from chat")
     structured_preferences: list[StructuredPreference] = Field(default_factory=list, description="Structured preferences from chat")
 
+    city_photo_reference: Optional[str] = Field(default=None, description="Google Places photo reference for the destination city")
+
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
 

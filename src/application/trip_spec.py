@@ -3,7 +3,7 @@ TripSpec Collector service.
 Handles creation and updating of TripSpec from form inputs.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -14,6 +14,7 @@ from src.domain.models import TripSpec, DailyRoutine, StructuredPreference
 from src.domain.schemas import TripCreateRequest, TripUpdateRequest, TripResponse, DailyRoutineResponse
 from src.infrastructure.models import TripModel
 from src.infrastructure.geocoding import get_geocoding_service
+from src.infrastructure.google_place_details import fetch_city_photo_reference
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class TripSpecCollector:
     Service for creating and updating trip specifications from form inputs.
     This collector manages TripSpec data and persists it to the database.
     """
+    CITY_PHOTO_REFRESH_HOURS = 24
 
     @staticmethod
     def _translate_interests(interests: list[str]) -> list[str]:
@@ -135,6 +137,7 @@ class TripSpecCollector:
             hotel_lon=trip_model.hotel_lon,
             additional_preferences=trip_model.additional_preferences,
             structured_preferences=structured_prefs,
+            city_photo_reference=trip_model.city_photo_reference,
             created_at=trip_model.created_at.isoformat() + "Z",
             updated_at=trip_model.updated_at.isoformat() + "Z",
         )
@@ -203,6 +206,17 @@ class TripSpecCollector:
         # Translate interests from Russian to English for LLM understanding
         translated_interests = self._translate_interests(request.interests) if request.interests else []
 
+        # Fetch city photo reference from Google Places
+        city_photo_reference = None
+        try:
+            city_photo_reference = await fetch_city_photo_reference(request.city)
+            if city_photo_reference:
+                logger.info(f"Fetched city photo reference for '{request.city}'")
+            else:
+                logger.warning(f"No city photo found for '{request.city}'")
+        except Exception as e:
+            logger.error(f"Error fetching city photo for '{request.city}': {e}")
+
         # Create TripModel (ORM)
         trip_model = TripModel(
             city=request.city,
@@ -221,6 +235,7 @@ class TripSpecCollector:
             hotel_lat=hotel_lat,
             hotel_lon=hotel_lon,
             additional_preferences={},
+            city_photo_reference=city_photo_reference,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )
@@ -235,6 +250,7 @@ class TripSpecCollector:
         self,
         trip_id: UUID,
         db: AsyncSession,
+        refresh_city_photo: bool = False,
     ) -> Optional[TripResponse]:
         """
         Get an existing trip by ID.
@@ -254,7 +270,37 @@ class TripSpecCollector:
         if not trip_model:
             return None
 
+        if refresh_city_photo:
+            await self._refresh_city_photo_reference(trip_model, db)
+
         return self._trip_model_to_response(trip_model)
+
+    async def _refresh_city_photo_reference(
+        self,
+        trip_model: TripModel,
+        db: AsyncSession,
+    ) -> None:
+        refresh_after = datetime.utcnow() - timedelta(hours=self.CITY_PHOTO_REFRESH_HOURS)
+
+        if trip_model.city_photo_reference and trip_model.updated_at:
+            if trip_model.updated_at >= refresh_after:
+                return
+
+        try:
+            new_reference = await fetch_city_photo_reference(trip_model.city)
+        except Exception as exc:
+            logger.error(f"Failed to refresh city photo for '{trip_model.city}': {exc}")
+            return
+
+        if not new_reference:
+            return
+
+        if new_reference != trip_model.city_photo_reference:
+            trip_model.city_photo_reference = new_reference
+
+        trip_model.updated_at = datetime.utcnow()
+        await db.commit()
+        await db.refresh(trip_model)
 
     async def update_trip(
         self,

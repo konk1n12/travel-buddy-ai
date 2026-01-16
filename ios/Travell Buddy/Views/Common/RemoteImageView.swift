@@ -22,11 +22,18 @@ private final class RemoteImageCache {
 
 private final class RemoteImageLoader: ObservableObject {
     @Published var image: UIImage?
+    @Published var isLoading: Bool = false
     private var task: URLSessionDataTask?
+    private var currentURL: URL?
 
     func load(from url: URL?) {
+        // Skip if already loading the same URL
+        guard url != currentURL else { return }
+
         task?.cancel()
         image = nil
+        currentURL = url
+        isLoading = false
 
         guard let url else { return }
         let nsURL = url as NSURL
@@ -36,21 +43,44 @@ private final class RemoteImageLoader: ObservableObject {
             return
         }
 
-        let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 30)
+        isLoading = true
+
+        var request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 30)
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+
         task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard
-                let self,
-                let data,
-                let httpResponse = response as? HTTPURLResponse,
-                200..<300 ~= httpResponse.statusCode,
-                let uiImage = UIImage(data: data),
-                error == nil
-            else {
+            DispatchQueue.main.async {
+                self?.isLoading = false
+            }
+
+            if let error {
+                print("[RemoteImageView] Error loading \(url): \(error.localizedDescription)")
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("[RemoteImageView] No HTTP response for \(url)")
+                return
+            }
+
+            guard 200..<300 ~= httpResponse.statusCode else {
+                print("[RemoteImageView] HTTP \(httpResponse.statusCode) for \(url)")
+                return
+            }
+
+            guard let data, !data.isEmpty else {
+                print("[RemoteImageView] Empty data for \(url)")
+                return
+            }
+
+            guard let uiImage = UIImage(data: data) else {
+                print("[RemoteImageView] Failed to decode image for \(url)")
                 return
             }
 
             RemoteImageCache.shared.store(uiImage, for: nsURL)
             DispatchQueue.main.async {
+                guard let self, self.currentURL == url else { return }
                 self.image = uiImage
             }
         }
@@ -64,19 +94,28 @@ struct RemoteImageView: View {
     @StateObject private var loader = RemoteImageLoader()
 
     var body: some View {
-        Group {
-            if let image = loader.image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Color.black.opacity(0.2)
+        GeometryReader { geometry in
+            ZStack {
+                if let image = loader.image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                } else {
+                    Color.black.opacity(0.2)
+
+                    if loader.isLoading {
+                        ProgressView()
+                            .tint(.white.opacity(0.5))
+                    }
+                }
             }
         }
         .onAppear {
             loader.load(from: url)
         }
-        .onChange(of: url) { newValue in
+        .onChange(of: url) { _, newValue in
             loader.load(from: newValue)
         }
     }

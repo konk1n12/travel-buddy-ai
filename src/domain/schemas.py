@@ -155,6 +155,8 @@ class TripResponse(BaseModel):
     additional_preferences: dict
     structured_preferences: list[StructuredPreference] = Field(default_factory=list)
 
+    city_photo_reference: Optional[str] = Field(default=None, description="Google Places photo reference for the destination city")
+
     @field_validator('additional_preferences', mode='before')
     @classmethod
     def normalize_additional_preferences(cls, v):
@@ -568,6 +570,7 @@ class ItineraryResponse(BaseModel):
     days: list[ItineraryDay] = Field(description="Complete itinerary days with selected POIs and timing")
     created_at: str = Field(description="ISO 8601 timestamp when itinerary was created")
     is_locked: bool = Field(default=False, description="True when content is truncated for guests")
+    city_photo_reference: Optional[str] = Field(default=None, description="Google Places photo reference for the destination city")
 
     class Config:
         json_schema_extra = {

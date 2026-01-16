@@ -19,6 +19,7 @@ struct TripPlan {
     let interestsSummary: String
     let tripSummary: String?  // Brief overview of the entire trip
     let isLocked: Bool
+    let cityPhotoReference: String?  // Google Places photo reference for the destination city
 
     /// Returns the coordinate of the first activity with valid coordinates, or nil if none found.
     var cityCoordinate: CLLocationCoordinate2D? {

@@ -68,8 +68,8 @@ final class AuthAPIClient {
         }
     }
 
-    func authenticateApple(idToken: String, firstName: String?, lastName: String?) async throws -> SessionResponseDTO {
-        let request = AppleAuthRequestDTO(idToken: idToken, firstName: firstName, lastName: lastName)
+    func authenticateApple(idToken: String, nonce: String? = nil, firstName: String?, lastName: String?) async throws -> SessionResponseDTO {
+        let request = AppleAuthRequestDTO(idToken: idToken, nonce: nonce, firstName: firstName, lastName: lastName)
         let encoder = JSONEncoder()
         let bodyData = try encoder.encode(request)
 

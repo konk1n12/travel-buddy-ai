@@ -70,7 +70,7 @@ struct HomeView: View {
                 .ignoresSafeArea(.container, edges: .top)
 
                 // Fixed bottom tab bar
-                BottomTabBarView()
+                BottomTabBarView(bottomInset: safeBottomInset)
             }
         }
         .navigationBarHidden(true)
@@ -80,7 +80,7 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showAuthSheet) {
             PaywallView(
-                errorMessage: "Войдите, чтобы открыть личный кабинет",
+                subtitle: "Войдите, чтобы открыть личный кабинет",
                 onAuthSuccess: {
                     showAuthSheet = false
                     showAccountSheet = true
@@ -112,18 +112,10 @@ private struct HeroView: View {
     var body: some View {
         ZStack {
             // Background image
-            AsyncImage(url: heroImageURL) { phase in
-                if let image = phase.image {
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Color.black.opacity(0.25)
-                }
-            }
-            .frame(height: height)
-            .frame(maxWidth: .infinity)
-            .clipped()
+            RemoteImageView(url: heroImageURL)
+                .frame(height: height)
+                .frame(maxWidth: .infinity)
+                .clipped()
 
             // Gradient overlay
             LinearGradient(
@@ -177,17 +169,9 @@ private struct HeaderRow: View {
                                 .stroke(HomeStyle.Colors.glassBorder, lineWidth: 1)
                         )
 
-                    AsyncImage(url: avatarURL) { phase in
-                        if let image = phase.image {
-                            image
-                                .resizable()
-                                .scaledToFill()
-                        } else {
-                            Color.white.opacity(0.08)
-                        }
-                    }
-                    .frame(width: HomeStyle.Layout.avatarInnerSize, height: HomeStyle.Layout.avatarInnerSize)
-                    .clipShape(Circle())
+                    RemoteImageView(url: avatarURL)
+                        .frame(width: HomeStyle.Layout.avatarInnerSize, height: HomeStyle.Layout.avatarInnerSize)
+                        .clipShape(Circle())
                 }
                 .frame(width: HomeStyle.Layout.avatarSize, height: HomeStyle.Layout.avatarSize)
             }
@@ -495,17 +479,9 @@ private struct TripCardView: View {
     var body: some View {
         ZStack {
             // Background image
-            AsyncImage(url: imageURL) { phase in
-                if let image = phase.image {
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Color.black.opacity(0.3)
-                }
-            }
-            .frame(width: HomeStyle.Layout.tripCardWidth, height: HomeStyle.Layout.tripCardHeight)
-            .clipped()
+            RemoteImageView(url: imageURL)
+                .frame(width: HomeStyle.Layout.tripCardWidth, height: HomeStyle.Layout.tripCardHeight)
+                .clipped()
 
             // Gradient overlay
             LinearGradient(
@@ -610,21 +586,13 @@ private struct DestinationRowView: View {
     var body: some View {
         HStack(spacing: 12) {
             // Thumbnail
-            AsyncImage(url: imageURL) { phase in
-                if let image = phase.image {
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Color.white.opacity(0.08)
-                }
-            }
-            .frame(width: HomeStyle.Layout.destinationThumbSize, height: HomeStyle.Layout.destinationThumbSize)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(HomeStyle.Colors.glassBorder, lineWidth: 1)
-            )
+            RemoteImageView(url: imageURL)
+                .frame(width: HomeStyle.Layout.destinationThumbSize, height: HomeStyle.Layout.destinationThumbSize)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(HomeStyle.Colors.glassBorder, lineWidth: 1)
+                )
 
             // Content
             VStack(alignment: .leading, spacing: 6) {
@@ -677,28 +645,34 @@ private struct DestinationRowView: View {
 // MARK: - Bottom Tab Bar View
 
 private struct BottomTabBarView: View {
+    let bottomInset: CGFloat
+
     var body: some View {
-        HStack {
-            TabBarItem(title: "Главная", systemImage: "house.fill", isActive: true)
-            TabBarItem(title: "Поиск", systemImage: "magnifyingglass", isActive: false)
-            TabBarItem(title: "Сохранено", systemImage: "bookmark", isActive: false)
-            TabBarItem(title: "Профиль", systemImage: "person", isActive: false)
-        }
-        .padding(.horizontal, HomeStyle.Layout.tabBarHorizontalPadding)
-        .padding(.top, HomeStyle.Layout.tabBarTopPadding)
-        .padding(.bottom, HomeStyle.Layout.tabBarBottomPadding)
-        .frame(maxWidth: .infinity)
-        .background(
-            ZStack {
-                HomeStyle.Colors.tabBarFill
-                    .background(.ultraThinMaterial)
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            HStack {
+                TabBarItem(title: "Главная", systemImage: "house.fill", isActive: true)
+                TabBarItem(title: "Поиск", systemImage: "magnifyingglass", isActive: false)
+                TabBarItem(title: "Сохранено", systemImage: "bookmark", isActive: false)
+                TabBarItem(title: "Профиль", systemImage: "person", isActive: false)
             }
-            .clipShape(TopRoundedRectangle(radius: HomeStyle.Radius.tabBar))
-            .overlay(
-                TopRoundedRectangle(radius: HomeStyle.Radius.tabBar)
-                    .stroke(HomeStyle.Colors.tabBarBorder, lineWidth: 1)
+            .padding(.horizontal, HomeStyle.Layout.tabBarHorizontalPadding)
+            .padding(.top, HomeStyle.Layout.tabBarTopPadding)
+            .padding(.bottom, max(bottomInset, HomeStyle.Layout.tabBarBottomPadding))
+            .frame(maxWidth: .infinity)
+            .background(
+                ZStack {
+                    HomeStyle.Colors.tabBarFill
+                        .background(.ultraThinMaterial)
+                }
+                .clipShape(TopRoundedRectangle(radius: HomeStyle.Radius.tabBar))
+                .overlay(
+                    TopRoundedRectangle(radius: HomeStyle.Radius.tabBar)
+                        .stroke(HomeStyle.Colors.tabBarBorder, lineWidth: 1)
+                )
             )
-        )
+        }
         .ignoresSafeArea(.container, edges: .bottom)
     }
 }

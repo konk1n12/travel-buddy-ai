@@ -138,7 +138,11 @@ Rules:
             enable_extended_trace: Include extended debug trace (generator params, provider calls, ranking)
         """
         # 1. Load trip spec
-        trip_spec = await self.trip_spec_collector.get_trip(trip_id, db)
+        trip_spec = await self.trip_spec_collector.get_trip(
+            trip_id,
+            db,
+            refresh_city_photo=True,
+        )
         if not trip_spec:
             raise ValueError(f"Trip {trip_id} not found")
 
@@ -224,6 +228,7 @@ Rules:
             days=days,
             created_at=created_at.isoformat() + "Z",
             route_trace=route_trace,
+            city_photo_reference=trip_spec.city_photo_reference,
         )
 
     async def _generate_with_llm(self, trip_spec) -> list[DaySkeleton]:
