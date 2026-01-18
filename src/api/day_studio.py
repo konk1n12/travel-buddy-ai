@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from src.infrastructure.database import get_db
 from src.infrastructure.models import TripModel, ItineraryModel
 from src.auth.dependencies import get_auth_context, AuthContext, check_trip_ownership
+from src.i18n import t
 from src.domain.models import ItineraryDay, ItineraryBlock, POICandidate
 from src.application.day_editor import DayEditor, DayChange, ChangeType
 
@@ -194,13 +195,13 @@ async def get_day_studio(
     if not trip:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Trip with ID {trip_id} not found"
+            detail=t("errors.trip_not_found", trip_id=str(trip_id))
         )
 
     if not check_trip_ownership(trip, auth):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have access to this trip"
+            detail=t("errors.access_denied")
         )
 
     # Get itinerary
@@ -212,7 +213,7 @@ async def get_day_studio(
     if not itinerary_model or not itinerary_model.days:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Itinerary not found. Please generate a plan first."
+            detail=t("errors.itinerary_not_found")
         )
 
     # Find the requested day
@@ -227,7 +228,7 @@ async def get_day_studio(
     if not day_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Day {day_id} not found in itinerary"
+            detail=t("errors.day_not_found", day_id=day_id)
         )
 
     # Extract places from blocks
@@ -355,13 +356,13 @@ async def apply_day_changes(
     if not trip:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Trip with ID {trip_id} not found"
+            detail=t("errors.trip_not_found", trip_id=str(trip_id))
         )
 
     if not check_trip_ownership(trip, auth):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have access to this trip"
+            detail=t("errors.access_denied")
         )
 
     # Get itinerary
@@ -373,7 +374,7 @@ async def apply_day_changes(
     if not itinerary_model:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Itinerary not found"
+            detail=t("errors.itinerary_not_found")
         )
 
     # TODO: Check revision for conflict (future enhancement)
@@ -540,7 +541,7 @@ async def apply_day_changes(
         logger.error(f"Failed to apply changes to day {day_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to apply changes: {str(e)}"
+            detail=t("errors.apply_changes_failed", error=str(e))
         )
 
 

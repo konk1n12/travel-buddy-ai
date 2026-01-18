@@ -20,6 +20,7 @@ from src.domain.models import (
 )
 from src.application.trip_spec import TripSpecCollector
 from src.infrastructure.models import ItineraryModel
+from src.i18n import t
 
 
 class TripCritic:
@@ -94,7 +95,7 @@ class TripCritic:
                 CritiqueIssue(
                     code="DAY_TOO_BUSY",
                     severity=CritiqueIssueSeverity.WARNING,
-                    message=f"Day {day.day_number} has {active_hours:.1f} hours of activities, which may be too intense for a {pace.value} pace.",
+                    message=t("critique.day_too_busy", day_number=day.day_number, hours=f"{active_hours:.1f}", pace=pace.value),
                     day_number=day.day_number,
                     details={
                         "active_hours": round(active_hours, 1),
@@ -133,7 +134,7 @@ class TripCritic:
                 CritiqueIssue(
                     code="MISSING_BREAKFAST",
                     severity=CritiqueIssueSeverity.WARNING,
-                    message=f"Day {day.day_number} is missing a breakfast.",
+                    message=t("critique.missing_breakfast", day_number=day.day_number),
                     day_number=day.day_number,
                     details={"meal_type": "breakfast"},
                 )
@@ -144,7 +145,7 @@ class TripCritic:
                 CritiqueIssue(
                     code="MISSING_LUNCH",
                     severity=CritiqueIssueSeverity.WARNING,
-                    message=f"Day {day.day_number} is missing a lunch.",
+                    message=t("critique.missing_lunch", day_number=day.day_number),
                     day_number=day.day_number,
                     details={"meal_type": "lunch"},
                 )
@@ -155,7 +156,7 @@ class TripCritic:
                 CritiqueIssue(
                     code="MISSING_DINNER",
                     severity=CritiqueIssueSeverity.WARNING,
-                    message=f"Day {day.day_number} is missing a dinner.",
+                    message=t("critique.missing_dinner", day_number=day.day_number),
                     day_number=day.day_number,
                     details={"meal_type": "dinner"},
                 )
@@ -179,7 +180,7 @@ class TripCritic:
                         CritiqueIssue(
                             code="INVALID_TIME_RANGE",
                             severity=CritiqueIssueSeverity.ERROR,
-                            message=f"Day {day.day_number}, block {i}: End time is before start time.",
+                            message=t("critique.end_before_start", day_number=day.day_number, block=i),
                             day_number=day.day_number,
                             block_index=i,
                             details={
@@ -199,7 +200,7 @@ class TripCritic:
                         CritiqueIssue(
                             code="BLOCK_OVERLAP",
                             severity=CritiqueIssueSeverity.ERROR,
-                            message=f"Day {day.day_number}: Block {i} overlaps with block {i+1}.",
+                            message=t("critique.blocks_overlap", day_number=day.day_number, block1=i, block2=i+1),
                             day_number=day.day_number,
                             block_index=i,
                             details={
@@ -221,7 +222,7 @@ class TripCritic:
                     CritiqueIssue(
                         code="LONG_TRAVEL",
                         severity=CritiqueIssueSeverity.WARNING,
-                        message=f"Day {day.day_number}, block {i}: Long travel time ({block.travel_time_from_prev} minutes) from previous location.",
+                        message=t("critique.long_travel", day_number=day.day_number, block=i, minutes=block.travel_time_from_prev),
                         day_number=day.day_number,
                         block_index=i,
                         details={
@@ -267,7 +268,7 @@ class TripCritic:
                     CritiqueIssue(
                         code="LATE_NIGHTLIFE",
                         severity=CritiqueIssueSeverity.INFO,
-                        message=f"Day {day.day_number}: Nightlife ends {hours_past_sleep:.1f} hours after your usual sleep time.",
+                        message=t("critique.nightlife_vs_sleep", day_number=day.day_number),
                         day_number=day.day_number,
                         block_index=block_index,
                         details={
@@ -315,7 +316,7 @@ class TripCritic:
                     CritiqueIssue(
                         code="CONSECUTIVE_INTENSE_DAYS",
                         severity=CritiqueIssueSeverity.WARNING,
-                        message=f"Days {streak_start}-{day.day_number}: {intense_streak} consecutive intense days. Consider adding a lighter day.",
+                        message=t("critique.consecutive_intense", start=streak_start, end=day.day_number, count=intense_streak),
                         day_number=None,  # Trip-level issue
                         details={
                             "streak_start": streak_start,

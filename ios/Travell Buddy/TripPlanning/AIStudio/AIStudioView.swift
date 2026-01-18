@@ -29,6 +29,7 @@ struct AIStudioView: View {
             }
         }
         .navigationBarHidden(true)
+        .hideTabBar()
         .task {
             await viewModel.loadStudioData()
         }

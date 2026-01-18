@@ -21,6 +21,7 @@ struct RouteBuildingData: Identifiable {
 
 struct NewTripView: View {
     let prefilledTicket: FlightTicket?
+    let isRootView: Bool
 
     @Environment(\.dismiss) private var dismiss
 
@@ -28,7 +29,7 @@ struct NewTripView: View {
     @State private var startDate: Date
     @State private var endDate: Date
     @State private var showDatePicker: Bool = false
-    @State private var adultsCount: Int = 1
+    @State private var adultsCount: Int = 2
     @State private var childrenCount: Int = 0
     @State private var showTravelersPicker: Bool = false
     @State private var travelersSheetDetent: PresentationDetent = .height(520)
@@ -80,12 +81,13 @@ struct NewTripView: View {
         ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
     }
 
-    let popularCities = ["Париж", "Бали", "Нью-Йорк"]
+    let popularCities = ["Париж", "Рим", "Дубай", "Москва", "Лондон", "Барселона", "Пекин"]
 
     // MARK: - Init
 
-    init(prefilledTicket: FlightTicket? = nil) {
+    init(prefilledTicket: FlightTicket? = nil, isRootView: Bool = false) {
         self.prefilledTicket = prefilledTicket
+        self.isRootView = isRootView
 
         // Всегда инициализируем с дефолтными значениями
         // Реальные значения из билета установятся в .onAppear
@@ -93,7 +95,7 @@ struct NewTripView: View {
         let defaultStart = calendar.date(byAdding: .day, value: 1, to: Date()) ?? Date()
         let defaultEnd = calendar.date(byAdding: .day, value: 6, to: defaultStart) ?? Date()
 
-        _selectedCity = State(initialValue: "Бали")
+        _selectedCity = State(initialValue: "Париж")
         _startDate = State(initialValue: defaultStart)
         _endDate = State(initialValue: defaultEnd)
     }
@@ -156,9 +158,10 @@ struct NewTripView: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 14)
-                .padding(.bottom, 28)
+                .padding(.bottom, isRootView ? 28 + HomeStyle.Layout.tabBarHeight : 28)
             }
         }
+        .modifier(ConditionalHideTabBarModifier(shouldHide: !isRootView))
         .fullScreenCover(isPresented: $isShowingTripPlan) {
             if isPreview {
                 EmptyView()
@@ -244,7 +247,7 @@ struct NewTripView: View {
 
     private var headerSection: some View {
         HStack {
-            Button(action: { dismiss() }) {
+            Button(action: { handleClose() }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(mutedWarmGray)
@@ -260,7 +263,15 @@ struct NewTripView: View {
                 .foregroundColor(warmWhite)
         )
         .padding(.top, 6)
-}
+    }
+
+    private func handleClose() {
+        if isRootView {
+            NotificationCenter.default.post(name: .mainTabSelectionRequested, object: MainTab.home)
+        } else {
+            dismiss()
+        }
+    }
 
     // MARK: City Section
 
@@ -310,7 +321,7 @@ struct NewTripView: View {
             }
 
             infoCard(
-                title: "ГОСТИ",
+                title: "ПУТЕШЕСТВЕННИКИ",
                 value: travelersText,
                 systemImage: "person.2.fill"
             ) {

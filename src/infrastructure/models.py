@@ -173,3 +173,24 @@ class DayAISummaryModel(Base):
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class SavedTripModel(Base):
+    """Database model for user-saved trips (bookmarks)."""
+    __tablename__ = "saved_trips"
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'trip_id', name='uq_saved_trips_user_trip'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False, index=True)
+    trip_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False, index=True)
+    city_name: Mapped[str] = mapped_column(String, nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    hero_image_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    route_snapshot: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

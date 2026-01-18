@@ -53,8 +53,8 @@ enum HomeStyle {
         // Global spacing
         static let horizontalPadding: CGFloat = 16    // Consistent horizontal padding
         static let sectionSpacing: CGFloat = 20       // Vertical spacing between sections
-        static let tabBarHeight: CGFloat = 96         // Actual tab bar height
-        static let tabBarClearance: CGFloat = 112     // Bottom padding to clear tab bar
+        static let tabBarHeight: CGFloat = tabBarTopPadding + tabBarBottomPadding + 44
+        static let tabBarClearance: CGFloat = tabBarHeight + 16
         static let heroHeightRatio: CGFloat = 0.48    // Reduced hero height
 
         // Header

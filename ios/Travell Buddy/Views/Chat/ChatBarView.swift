@@ -40,7 +40,7 @@ struct ChatBarView: View {
             // Информация о чате
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text("Чат с Travel Buddy")
+                    Text("chat.title".localized)
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
                         .foregroundColor(Color(.label))
 
@@ -57,7 +57,7 @@ struct ChatBarView: View {
                         .foregroundColor(Color(.secondaryLabel))
                         .lineLimit(1)
                 } else {
-                    Text("Начни диалог с AI‑агентом")
+                    Text("chat.startDialog".localized)
                         .font(.system(size: 14))
                         .foregroundColor(Color(.secondaryLabel))
                         .italic()

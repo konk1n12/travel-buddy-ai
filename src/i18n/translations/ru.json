@@ -1,0 +1,59 @@
+{
+  "errors": {
+    "trip_not_found": "Поездка с ID {trip_id} не найдена",
+    "access_denied": "У вас нет доступа к этой поездке",
+    "place_not_found": "Место не найдено по указанному ID",
+    "macro_plan_failed": "Не удалось создать план: {error}",
+    "macro_plan_not_found": "План для поездки {trip_id} не найден",
+    "plan_failed": "Не удалось создать маршрут: {error}",
+    "itinerary_not_found": "Маршрут не найден. Сначала создайте план.",
+    "day_not_found": "День {day_id} не найден в маршруте",
+    "apply_changes_failed": "Не удалось применить изменения: {error}",
+    "unexpected_error": "Неожиданная ошибка: {error}",
+    "auth_failed": "Ошибка аутентификации: {error}",
+    "otp_send_failed": "Не удалось отправить код: {error}",
+    "verification_failed": "Ошибка верификации: {error}",
+    "token_refresh_failed": "Не удалось обновить токен: {error}",
+    "logout_failed": "Ошибка выхода: {error}",
+    "invalid_request": "Некорректный запрос. Проверьте введённые данные."
+  },
+  "critique": {
+    "day_too_busy": "День {day_number} содержит {hours} часов активностей — это может быть слишком интенсивно для темпа «{pace}».",
+    "missing_breakfast": "В день {day_number} не запланирован завтрак.",
+    "missing_lunch": "В день {day_number} не запланирован обед.",
+    "missing_dinner": "В день {day_number} не запланирован ужин.",
+    "end_before_start": "День {day_number}, блок {block}: время окончания раньше начала.",
+    "blocks_overlap": "День {day_number}: блок {block1} пересекается с блоком {block2}.",
+    "long_travel": "День {day_number}, блок {block}: долгий переезд ({minutes} минут) от предыдущей точки.",
+    "nightlife_vs_sleep": "День {day_number}: ночные развлечения могут конфликтовать с запланированным сном.",
+    "consecutive_intense": "Дни {start}-{end}: {count} интенсивных дней подряд. Рекомендуем добавить более лёгкий день.",
+    "poi_closed": "День {day_number}, блок {block}: {poi_name} может быть закрыт в запланированное время."
+  },
+  "day_summary": {
+    "empty_day": "День {day_number} в городе {city} ждёт вашего планирования.",
+    "default_summary": "{tempo} день для изучения {city}.",
+    "with_theme": "{tempo} день с акцентом на {theme} в {city}."
+  },
+  "tempo": {
+    "low": "Расслабленный",
+    "medium": "Сбалансированный",
+    "high": "Насыщенный"
+  },
+  "presets": {
+    "overview": "обзорный",
+    "food": "гастрономический",
+    "walks": "прогулочный",
+    "avoid_crowds": "без толп",
+    "art": "арт",
+    "architecture": "архитектурный",
+    "cozy": "уютный",
+    "nightlife": "вечерний"
+  },
+  "block_types": {
+    "activity": "Активность",
+    "meal": "Еда",
+    "nightlife": "Ночная жизнь",
+    "rest": "Отдых",
+    "travel": "Переезд"
+  }
+}

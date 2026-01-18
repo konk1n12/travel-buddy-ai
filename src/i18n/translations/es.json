@@ -1,0 +1,59 @@
+{
+  "errors": {
+    "trip_not_found": "Viaje con ID {trip_id} no encontrado",
+    "access_denied": "No tienes acceso a este viaje",
+    "place_not_found": "Lugar no encontrado para el ID proporcionado",
+    "macro_plan_failed": "Error al generar el plan: {error}",
+    "macro_plan_not_found": "No se encontró plan para el viaje {trip_id}",
+    "plan_failed": "Error al generar el itinerario: {error}",
+    "itinerary_not_found": "Itinerario no encontrado. Por favor, genera un plan primero.",
+    "day_not_found": "Día {day_id} no encontrado en el itinerario",
+    "apply_changes_failed": "Error al aplicar los cambios: {error}",
+    "unexpected_error": "Error inesperado: {error}",
+    "auth_failed": "Error de autenticación: {error}",
+    "otp_send_failed": "Error al enviar el código: {error}",
+    "verification_failed": "Error de verificación: {error}",
+    "token_refresh_failed": "Error al actualizar el token: {error}",
+    "logout_failed": "Error al cerrar sesión: {error}",
+    "invalid_request": "Solicitud inválida. Por favor, verifica tus datos."
+  },
+  "critique": {
+    "day_too_busy": "El día {day_number} tiene {hours} horas de actividades, lo cual puede ser demasiado intenso para un ritmo «{pace}».",
+    "missing_breakfast": "El día {day_number} no tiene desayuno programado.",
+    "missing_lunch": "El día {day_number} no tiene almuerzo programado.",
+    "missing_dinner": "El día {day_number} no tiene cena programada.",
+    "end_before_start": "Día {day_number}, bloque {block}: la hora de fin es anterior a la de inicio.",
+    "blocks_overlap": "Día {day_number}: el bloque {block1} se superpone con el bloque {block2}.",
+    "long_travel": "Día {day_number}, bloque {block}: tiempo de viaje largo ({minutes} minutos) desde la ubicación anterior.",
+    "nightlife_vs_sleep": "Día {day_number}: las actividades nocturnas pueden entrar en conflicto con el horario de sueño previsto.",
+    "consecutive_intense": "Días {start}-{end}: {count} días intensos consecutivos. Considera añadir un día más ligero.",
+    "poi_closed": "Día {day_number}, bloque {block}: {poi_name} puede estar cerrado a la hora programada."
+  },
+  "day_summary": {
+    "empty_day": "El día {day_number} en {city} espera tu planificación.",
+    "default_summary": "Un día {tempo} explorando {city}.",
+    "with_theme": "Un día {tempo} enfocado en {theme} en {city}."
+  },
+  "tempo": {
+    "low": "relajado",
+    "medium": "equilibrado",
+    "high": "intenso"
+  },
+  "presets": {
+    "overview": "panorámico",
+    "food": "gastronómico",
+    "walks": "paseo",
+    "avoid_crowds": "sin multitudes",
+    "art": "artístico",
+    "architecture": "arquitectónico",
+    "cozy": "acogedor",
+    "nightlife": "nocturno"
+  },
+  "block_types": {
+    "activity": "Actividad",
+    "meal": "Comida",
+    "nightlife": "Vida nocturna",
+    "rest": "Descanso",
+    "travel": "Traslado"
+  }
+}

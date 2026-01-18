@@ -1,0 +1,59 @@
+{
+  "errors": {
+    "trip_not_found": "لم يتم العثور على الرحلة بالمعرّف {trip_id}",
+    "access_denied": "ليس لديك صلاحية الوصول إلى هذه الرحلة",
+    "place_not_found": "لم يتم العثور على المكان للمعرّف المقدم",
+    "macro_plan_failed": "فشل في إنشاء الخطة: {error}",
+    "macro_plan_not_found": "لم يتم العثور على خطة للرحلة {trip_id}",
+    "plan_failed": "فشل في إنشاء خطة الرحلة: {error}",
+    "itinerary_not_found": "لم يتم العثور على برنامج الرحلة. يرجى إنشاء خطة أولاً.",
+    "day_not_found": "لم يتم العثور على اليوم {day_id} في برنامج الرحلة",
+    "apply_changes_failed": "فشل في تطبيق التغييرات: {error}",
+    "unexpected_error": "خطأ غير متوقع: {error}",
+    "auth_failed": "فشل المصادقة: {error}",
+    "otp_send_failed": "فشل في إرسال رمز التحقق: {error}",
+    "verification_failed": "فشل التحقق: {error}",
+    "token_refresh_failed": "فشل في تحديث الرمز: {error}",
+    "logout_failed": "فشل في تسجيل الخروج: {error}",
+    "invalid_request": "طلب غير صالح. يرجى التحقق من بياناتك."
+  },
+  "critique": {
+    "day_too_busy": "اليوم {day_number} يحتوي على {hours} ساعات من الأنشطة، وهو ما قد يكون مكثفاً جداً لوتيرة «{pace}».",
+    "missing_breakfast": "اليوم {day_number} لا يتضمن وجبة إفطار.",
+    "missing_lunch": "اليوم {day_number} لا يتضمن وجبة غداء.",
+    "missing_dinner": "اليوم {day_number} لا يتضمن وجبة عشاء.",
+    "end_before_start": "اليوم {day_number}، الفترة {block}: وقت الانتهاء قبل وقت البدء.",
+    "blocks_overlap": "اليوم {day_number}: الفترة {block1} تتداخل مع الفترة {block2}.",
+    "long_travel": "اليوم {day_number}، الفترة {block}: وقت سفر طويل ({minutes} دقيقة) من الموقع السابق.",
+    "nightlife_vs_sleep": "اليوم {day_number}: أنشطة الحياة الليلية قد تتعارض مع جدول النوم المخطط.",
+    "consecutive_intense": "الأيام {start}-{end}: {count} أيام مكثفة متتالية. فكر في إضافة يوم أخف.",
+    "poi_closed": "اليوم {day_number}، الفترة {block}: قد يكون {poi_name} مغلقاً في الوقت المحدد."
+  },
+  "day_summary": {
+    "empty_day": "اليوم {day_number} في {city} ينتظر تخطيطك.",
+    "default_summary": "يوم {tempo} لاستكشاف {city}.",
+    "with_theme": "يوم {tempo} مع التركيز على {theme} في {city}."
+  },
+  "tempo": {
+    "low": "مريح",
+    "medium": "متوازن",
+    "high": "مزدحم"
+  },
+  "presets": {
+    "overview": "استعراض",
+    "food": "طعام",
+    "walks": "جولات مشي",
+    "avoid_crowds": "تجنب الزحام",
+    "art": "فني",
+    "architecture": "معماري",
+    "cozy": "مريح",
+    "nightlife": "مسائي"
+  },
+  "block_types": {
+    "activity": "نشاط",
+    "meal": "وجبة",
+    "nightlife": "حياة ليلية",
+    "rest": "راحة",
+    "travel": "تنقل"
+  }
+}

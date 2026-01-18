@@ -16,6 +16,9 @@ import Combine
 enum ProtectedAction: Equatable {
     case viewMap
     case viewDay(dayIndex: Int)
+    case saveTrip(tripId: UUID, cityName: String, startDate: Date, endDate: Date, heroImageUrl: String?)
+    case viewSavedTrips
+    case viewProfile
 
     var gatingMessage: String {
         switch self {
@@ -23,6 +26,12 @@ enum ProtectedAction: Equatable {
             return "Карта доступна после входа"
         case .viewDay(let dayIndex):
             return "День \(dayIndex + 1) доступен после входа"
+        case .saveTrip:
+            return "Сохранение маршрута"
+        case .viewSavedTrips:
+            return "Мои поездки доступны после входа"
+        case .viewProfile:
+            return "Профиль доступен после входа"
         }
     }
 
@@ -30,8 +39,25 @@ enum ProtectedAction: Equatable {
         switch self {
         case .viewDay(let dayIndex):
             return dayIndex + 1
-        case .viewMap:
+        case .viewMap, .saveTrip, .viewSavedTrips, .viewProfile:
             return nil
+        }
+    }
+
+    static func == (lhs: ProtectedAction, rhs: ProtectedAction) -> Bool {
+        switch (lhs, rhs) {
+        case (.viewMap, .viewMap):
+            return true
+        case let (.viewDay(l), .viewDay(r)):
+            return l == r
+        case let (.saveTrip(lId, _, _, _, _), .saveTrip(rId, _, _, _, _)):
+            return lId == rId
+        case (.viewSavedTrips, .viewSavedTrips):
+            return true
+        case (.viewProfile, .viewProfile):
+            return true
+        default:
+            return false
         }
     }
 }

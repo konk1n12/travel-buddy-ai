@@ -10,13 +10,15 @@ import SwiftUI
 struct HomeView: View {
     @State private var showAccountSheet: Bool = false
     @State private var showAuthSheet: Bool = false
+    @State private var showAllTrips: Bool = false
+    @State private var isShowingChat: Bool = false
+    @StateObject private var savedTripsManager = SavedTripsManager.shared
 
     var body: some View {
         GeometryReader { proxy in
             let screenHeight = proxy.size.height
             let heroHeight = max(320, screenHeight * HomeStyle.Layout.heroHeightRatio)
             let safeTopInset = proxy.safeAreaInsets.top
-            let safeBottomInset = proxy.safeAreaInsets.bottom
 
             ZStack(alignment: .bottom) {
                 // Warm premium gradient background
@@ -53,39 +55,60 @@ struct HomeView: View {
                         HeroView(
                             height: heroHeight,
                             topInset: safeTopInset,
-                            onAccountTap: handleAccountTap
+                            onAccountTap: handleAccountTap,
+                            onChatTap: { isShowingChat = true }
                         )
 
                         // Main content sections with consistent spacing
                         VStack(spacing: HomeStyle.Layout.sectionSpacing) {
                             ActionPanelView()
-                            TripsCarouselView()
-                            DestinationsListView()
+                            TripsCarouselView(
+                                trips: savedTripsManager.topTrips,
+                                totalCount: savedTripsManager.totalCount,
+                                isLoading: savedTripsManager.isLoading,
+                                onShowAll: { showAllTrips = true }
+                            )
+                            // DestinationsListView() // Hidden per request.
                         }
                         .padding(.horizontal, HomeStyle.Layout.horizontalPadding)
                         .padding(.top, HomeStyle.Layout.sectionSpacing)
-                        .padding(.bottom, HomeStyle.Layout.tabBarClearance + safeBottomInset)
+                        .padding(.bottom, HomeStyle.Layout.tabBarClearance)
                     }
                 }
                 .ignoresSafeArea(.container, edges: .top)
-
-                // Fixed bottom tab bar
-                BottomTabBarView(bottomInset: safeBottomInset)
             }
         }
         .navigationBarHidden(true)
-        .toolbar(.hidden, for: .tabBar)
         .sheet(isPresented: $showAccountSheet) {
             AccountSheet()
         }
         .sheet(isPresented: $showAuthSheet) {
             PaywallView(
-                subtitle: "Войдите, чтобы открыть личный кабинет",
+                subtitle: "paywall.loginSubtitle".localized,
                 onAuthSuccess: {
                     showAuthSheet = false
                     showAccountSheet = true
                 }
             )
+        }
+        .background(
+            Group {
+                NavigationLink(isActive: $showAllTrips) {
+                    AllTripsView()
+                } label: {
+                    EmptyView()
+                }
+
+                NavigationLink(isActive: $isShowingChat) {
+                    ChatTabView()
+                } label: {
+                    EmptyView()
+                }
+            }
+            .hidden()
+        )
+        .task {
+            await savedTripsManager.refreshTop5()
         }
     }
 
@@ -104,6 +127,7 @@ private struct HeroView: View {
     let height: CGFloat
     let topInset: CGFloat
     let onAccountTap: () -> Void
+    let onChatTap: () -> Void
 
     private let heroImageURL = URL(string: "https://lh3.googleusercontent.com/aida-public/AB6AXuBxNfel8xNT-ZR2RRsVRURBCmK8WrzCMlPDU5L8h9ejzHyqB0EGrHYBqeyn565jzBO32mtwRg_7BYuy9UwWwUWvpz29cU2MAi7FV5x5JvAAI8uoSmpZk1E_5KVOwaxckQN2EigBu6k01FP_k4mj3lL4uwGbckr5iB--bJ9bIBoBlExdNz4LJedRxh6vvC1p0XYK65OQDbe0I1pkVAwaxtsFf63raFSgtIveLltDGdP7IxS6GgVW3yh8UjPrEuRXX9P4wVejoWcVegg")
 
@@ -134,7 +158,8 @@ private struct HeroView: View {
                 // Header row
                 HeaderRow(
                     avatarURL: avatarImageURL,
-                    onAccountTap: onAccountTap
+                    onAccountTap: onAccountTap,
+                    onChatTap: onChatTap
                 )
                 .padding(.horizontal, HomeStyle.Layout.horizontalPadding)
                 .padding(.top, topInset + HomeStyle.Layout.headerTopPadding)
@@ -156,6 +181,7 @@ private struct HeroView: View {
 private struct HeaderRow: View {
     let avatarURL: URL?
     let onAccountTap: () -> Void
+    let onChatTap: () -> Void
 
     var body: some View {
         HStack {
@@ -180,7 +206,7 @@ private struct HeaderRow: View {
             Spacer()
 
             // Chat button
-            Button(action: {}) {
+            Button(action: onChatTap) {
                 ZStack(alignment: .topTrailing) {
                     Circle()
                         .fill(Color.white.opacity(0.05))
@@ -222,7 +248,7 @@ private struct CTASection: View {
                 HStack(spacing: 8) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 16, weight: .semibold))
-                    Text("Сгенерировать маршрут")
+                    Text("home.cta.generateRoute".localized)
                         .font(.system(size: 14, weight: .bold))
                 }
                 .foregroundColor(.white)
@@ -270,8 +296,8 @@ private struct ActionPanelView: View {
                 VStack(spacing: HomeStyle.Layout.actionPanelGap) {
                     NavigationLink(destination: NewTripView()) {
                         ActionRowCard(
-                            title: "Маршрут",
-                            subtitle: "Построить\nумный путь",
+                            title: "home.action.route".localized,
+                            subtitle: "home.action.buildSmartPath".localized,
                             systemImage: "map.fill"
                         )
                     }
@@ -279,8 +305,8 @@ private struct ActionPanelView: View {
 
                     NavigationLink(destination: LiveGuideView()) {
                         ActionRowCard(
-                            title: "Live-гид",
-                            subtitle: "Аудио гид\nпо местам",
+                            title: "home.action.liveGuide".localized,
+                            subtitle: "home.action.audioGuide".localized,
                             systemImage: "mic.fill"
                         )
                     }
@@ -324,13 +350,13 @@ private struct HotelCard: View {
             Spacer(minLength: 4)
 
             // Title
-            Text("Подобрать\nотель")
+            Text("home.action.findHotel".localized)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.white)
                 .lineSpacing(2)
 
             // Subtitle
-            Text("Выгодные цены")
+            Text("home.action.bestPrices".localized)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(HomeStyle.Colors.textMuted)
         }
@@ -408,7 +434,7 @@ private struct FlightTicketButton: View {
                         .foregroundColor(.white)
                 )
 
-            Text("Добавить билет на самолет")
+            Text("home.action.addFlightTicket".localized)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(.white)
 
@@ -430,41 +456,178 @@ private struct FlightTicketButton: View {
 // MARK: - Trips Carousel View
 
 private struct TripsCarouselView: View {
+    let trips: [SavedTripCard]
+    let totalCount: Int
+    let isLoading: Bool
+    let onShowAll: () -> Void
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header row - same padding as parent
             HStack {
-                Text("Мои поездки")
+                Text("home.myTrips".localized)
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(.white)
                 Spacer()
-                Button(action: {}) {
-                    Text("Все")
+                if totalCount > 0 {
+                    Button(action: onShowAll) {
+                        HStack(spacing: 4) {
+                            Text("home.all".localized)
+                            if totalCount > 5 {
+                                Text("(\(totalCount))")
+                            }
+                        }
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(HomeStyle.Colors.primary)
+                    }
                 }
             }
 
-            // Horizontal scroll
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    TripCardView(
-                        city: "Париж",
-                        country: "Франция",
-                        dates: "12-18 Ноя",
-                        imageURL: URL(string: "https://lh3.googleusercontent.com/aida-public/AB6AXuAAcZ7xga_fZsjeYMNZjIX2DlgsqR66RkXtEyKeN6lXqGK2lDxHhizCMlLK1aacJ98mpdz7W16dxuQEAo6r4cPQRy7qtSlPWXOgUaXsdWWKG2xsRI_rRGYarOaYGWF9ylDWe7CSnOlfLL2n1xt9Q4trlkv3rWvTK0T_N88o2QEMYEbbRnagAxOCOzt77y-F7U2AGPv8rk5KT08cMGjuSpwnMag7zKKxAI4HEWJLPBjQI6TbEAQmXyWpPNsM94VGTHwdkeF_MXy6F5E")
-                    )
-                    TripCardView(
-                        city: "Цюрих",
-                        country: "Швейцария",
-                        dates: "05-10 Дек",
-                        imageURL: URL(string: "https://lh3.googleusercontent.com/aida-public/AB6AXuC9NNa-Sr26bIy5-IMAo0JjMzUhxeQuIaSg7IrV3jdJBOk5duymOUGc1vDMEvWF-PT0h-JGfzTPLfgAyHrZspn7KRMZ1iTB8Cb6Qg4wTUaOAS4Yi_s53AmTCSrN8uZkv8r7P7aSfUSpZWcdm7aDpsQ952Q1zBoslc5AtY4s96aYkE2DVQj2rDEC6CALRPAhd4CF8OYGNINGB6LGzLbviULEAPjwFTukN24T9yTQg5mxN8N3OiCgJy0Y2Ytp4zGUQztWKTj0NkrRyvg")
-                    )
+            // Content
+            if isLoading {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                        .tint(.white)
+                    Spacer()
                 }
-                .padding(.horizontal, HomeStyle.Layout.horizontalPadding)
+                .frame(height: HomeStyle.Layout.tripCardHeight)
+            } else if trips.isEmpty {
+                EmptyTripsView()
+            } else {
+                // Horizontal scroll with saved trips
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(trips) { trip in
+                            SavedTripCardView(trip: trip)
+                        }
+                    }
+                    .padding(.horizontal, HomeStyle.Layout.horizontalPadding)
+                }
+                .padding(.horizontal, -HomeStyle.Layout.horizontalPadding)
             }
-            .padding(.horizontal, -HomeStyle.Layout.horizontalPadding)
         }
+    }
+}
+
+// MARK: - Empty Trips View
+
+private struct EmptyTripsView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "bookmark")
+                .font(.system(size: 32, weight: .light))
+                .foregroundColor(.white.opacity(0.4))
+
+            Text("Пока нет сохранённых маршрутов")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.white.opacity(0.6))
+                .multilineTextAlignment(.center)
+
+            Text("Создайте маршрут и сохраните его")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundColor(.white.opacity(0.4))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: HomeStyle.Layout.tripCardHeight)
+        .padding(.horizontal, 24)
+        .background(
+            RoundedRectangle(cornerRadius: HomeStyle.Radius.card, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: HomeStyle.Radius.card, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+}
+
+// MARK: - Saved Trip Card View
+
+private struct SavedTripCardView: View {
+    let trip: SavedTripCard
+
+    var body: some View {
+        ZStack {
+            // Background image
+            if let imageUrlString = trip.heroImageUrl, let url = URL(string: imageUrlString) {
+                RemoteImageView(url: url)
+                    .frame(width: HomeStyle.Layout.tripCardWidth, height: HomeStyle.Layout.tripCardHeight)
+                    .clipped()
+            } else {
+                // Fallback gradient
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.3, green: 0.25, blue: 0.2),
+                        Color(red: 0.15, green: 0.12, blue: 0.1)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .frame(width: HomeStyle.Layout.tripCardWidth, height: HomeStyle.Layout.tripCardHeight)
+            }
+
+            // Gradient overlay
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.85),
+                    Color.black.opacity(0.2),
+                    Color.clear
+                ],
+                startPoint: .bottom,
+                endPoint: .top
+            )
+
+            // Date chip
+            VStack {
+                HStack {
+                    Spacer()
+                    Text(trip.dateRangeFormatted)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white.opacity(0.9))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(Color.white.opacity(0.1))
+                                .background(.ultraThinMaterial)
+                                .clipShape(Capsule())
+                        )
+                        .overlay(
+                            Capsule()
+                                .stroke(HomeStyle.Colors.glassBorder, lineWidth: 1)
+                        )
+                        .clipShape(Capsule())
+                }
+                .padding(.top, 12)
+                .padding(.trailing, 12)
+
+                Spacer()
+            }
+
+            // City name
+            VStack {
+                Spacer()
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(trip.cityName)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                }
+                .padding(.leading, 16)
+                .padding(.bottom, 16)
+            }
+        }
+        .frame(width: HomeStyle.Layout.tripCardWidth, height: HomeStyle.Layout.tripCardHeight)
+        .clipShape(RoundedRectangle(cornerRadius: HomeStyle.Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: HomeStyle.Radius.card, style: .continuous)
+                .stroke(HomeStyle.Colors.glassBorder, lineWidth: 1)
+        )
     }
 }
 
@@ -553,7 +716,7 @@ private struct TripCardView: View {
 private struct DestinationsListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Исследуй")
+            Text("home.explore".localized)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(.white)
 
@@ -639,61 +802,5 @@ private struct DestinationRowView: View {
             border: HomeStyle.Colors.glassBorder
         )
         .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: 4)
-    }
-}
-
-// MARK: - Bottom Tab Bar View
-
-private struct BottomTabBarView: View {
-    let bottomInset: CGFloat
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-
-            HStack {
-                TabBarItem(title: "Главная", systemImage: "house.fill", isActive: true)
-                TabBarItem(title: "Поиск", systemImage: "magnifyingglass", isActive: false)
-                TabBarItem(title: "Сохранено", systemImage: "bookmark", isActive: false)
-                TabBarItem(title: "Профиль", systemImage: "person", isActive: false)
-            }
-            .padding(.horizontal, HomeStyle.Layout.tabBarHorizontalPadding)
-            .padding(.top, HomeStyle.Layout.tabBarTopPadding)
-            .padding(.bottom, max(bottomInset, HomeStyle.Layout.tabBarBottomPadding))
-            .frame(maxWidth: .infinity)
-            .background(
-                ZStack {
-                    HomeStyle.Colors.tabBarFill
-                        .background(.ultraThinMaterial)
-                }
-                .clipShape(TopRoundedRectangle(radius: HomeStyle.Radius.tabBar))
-                .overlay(
-                    TopRoundedRectangle(radius: HomeStyle.Radius.tabBar)
-                        .stroke(HomeStyle.Colors.tabBarBorder, lineWidth: 1)
-                )
-            )
-        }
-        .ignoresSafeArea(.container, edges: .bottom)
-    }
-}
-
-// MARK: - Tab Bar Item
-
-private struct TabBarItem: View {
-    let title: String
-    let systemImage: String
-    let isActive: Bool
-
-    var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: systemImage)
-                .font(.system(size: HomeStyle.Layout.tabIconSize, weight: isActive ? .semibold : .regular))
-                .symbolVariant(isActive ? .fill : .none)
-            Text(title)
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(isActive ? HomeStyle.Colors.primary : HomeStyle.Colors.textMuted)
-        .frame(maxWidth: .infinity)
-        .frame(minHeight: 44) // Minimum tap target
     }
 }

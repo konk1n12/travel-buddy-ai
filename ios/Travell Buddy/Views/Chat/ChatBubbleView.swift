@@ -9,68 +9,52 @@ import SwiftUI
 
 struct ChatBubbleView: View {
     let message: ChatMessage
+    private let warmWhite = Color(red: 0.95, green: 0.94, blue: 0.92)
+    private let glassBorder = Color.white.opacity(0.14)
+    private let assistantFill = Color.white.opacity(0.06)
+    private let userFill = Color.white.opacity(0.10)
+    private let maxBubbleWidth = min(UIScreen.main.bounds.width * 0.72, 320)
 
     var body: some View {
         if message.isFromUser {
             // Сообщение пользователя (справа)
-            HStack(alignment: .top, spacing: 8) {
-                Spacer()
+            HStack(alignment: .top, spacing: 12) {
+                Spacer(minLength: 40)
 
                 Text(message.text)
                     .font(.system(size: 15))
-                    .foregroundColor(.white)
+                    .foregroundColor(warmWhite)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
+                    .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
                     .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color(red: 1.0, green: 0.55, blue: 0.30))
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(userFill)
                     )
-
-                // Аватар пользователя
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 1.0, green: 0.69, blue: 0.55),
-                                    Color(red: 0.86, green: 0.52, blue: 0.97)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 32, height: 32)
-
-                    Text("AH")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white)
-                }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(Color.travelBuddyOrange.opacity(0.6), lineWidth: 1)
+                    )
             }
         } else {
             // Сообщение AI (слева)
-            HStack(alignment: .top, spacing: 8) {
-                // Иконка AI
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color(.systemGray5))
-                        .frame(width: 32, height: 32)
-
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(.secondaryLabel))
-                }
-
+            HStack(alignment: .top, spacing: 12) {
                 Text(message.text)
                     .font(.system(size: 15))
-                    .foregroundColor(Color(.label))
+                    .foregroundColor(warmWhite)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
+                    .frame(maxWidth: maxBubbleWidth, alignment: .leading)
                     .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color(.systemGray6))
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(assistantFill)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(glassBorder, lineWidth: 1)
                     )
 
-                Spacer()
+                Spacer(minLength: 40)
             }
         }
     }

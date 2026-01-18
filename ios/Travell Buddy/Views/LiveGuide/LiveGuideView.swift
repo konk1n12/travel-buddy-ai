@@ -38,6 +38,7 @@ struct LiveGuideView: View {
         }
         .navigationTitle("Я уже в путешествии")
         .navigationBarTitleDisplayMode(.inline)
+        .hideTabBar()
     }
 }
 

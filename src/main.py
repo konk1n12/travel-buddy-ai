@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from src.config import settings
 from src.infrastructure.database import init_db
+from src.i18n import LocaleMiddleware
 from src.api.health import router as health_router
 from src.api.trips import router as trips_router
 from src.api.trip_chat import router as trip_chat_router
@@ -18,6 +19,7 @@ from src.api.fast_draft import router as fast_draft_router
 from src.api.place_details import router as place_details_router
 from src.api.auth import router as auth_router
 from src.api.day_studio import router as day_studio_router, places_router
+from src.api.saved_trips import router as saved_trips_router
 
 
 @asynccontextmanager
@@ -55,6 +57,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Locale middleware for language detection
+app.add_middleware(LocaleMiddleware)
+
 # Register routers
 app.include_router(health_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
@@ -68,6 +73,7 @@ app.include_router(fast_draft_router, prefix="/api")
 app.include_router(place_details_router, prefix="/api")
 app.include_router(day_studio_router, prefix="/api")
 app.include_router(places_router, prefix="/api")
+app.include_router(saved_trips_router, prefix="/api")
 
 
 @app.get("/")

@@ -329,56 +329,101 @@ private struct RoutePathModel {
 
 /// Основной TabView приложения (показывается после Splash).
 struct MainTabView: View {
+    @State private var selectedTab: MainTab = .home
+    @State private var pendingDestinationTab: MainTab?
+    @StateObject private var gatingManager = AuthGatingManager.shared
+    @StateObject private var tabBarVisibility = TabBarVisibilityManager.shared
+
     var body: some View {
-        TabView {
-            NavigationStack {
-                HomeView()
-            }
-            .tabItem {
-                Image(systemName: "house.fill")
-                Text("Главная")
-            }
+        ZStack(alignment: .bottom) {
+            // Tab content
+            TabView(selection: $selectedTab) {
+                HomeTabRootView()
+                .tag(MainTab.home)
+                .tabItem {
+                    Image(systemName: MainTab.home.systemImage)
+                    Text(MainTab.home.title)
+                }
 
-            NavigationStack {
-                Text("Поиск")
-                    .font(.system(.title3, design: .rounded))
-                    .foregroundColor(.primary)
-                    .navigationTitle("Поиск")
-                    .navigationBarTitleDisplayMode(.inline)
-            }
-            .tabItem {
-                Image(systemName: "magnifyingglass")
-                Text("Поиск")
-            }
+                NewTripTabRootView()
+                .tag(MainTab.newTrip)
+                .tabItem {
+                    Image(systemName: MainTab.newTrip.systemImage)
+                    Text(MainTab.newTrip.title)
+                }
 
-            NavigationStack {
-                Text("Сохранено")
-                    .font(.system(.title3, design: .rounded))
-                    .foregroundColor(.primary)
-                    .navigationTitle("Сохранено")
-                    .navigationBarTitleDisplayMode(.inline)
-            }
-            .tabItem {
-                Image(systemName: "bookmark.fill")
-                Text("Сохранено")
-            }
+                SavedTripsTabRootView()
+                .tag(MainTab.savedTrips)
+                .tabItem {
+                    Image(systemName: MainTab.savedTrips.systemImage)
+                    Text(MainTab.savedTrips.title)
+                }
 
-            NavigationStack {
-                Text("Профиль")
-                    .font(.system(.title3, design: .rounded))
-                    .foregroundColor(.primary)
-                    .navigationTitle("Профиль")
-                    .navigationBarTitleDisplayMode(.inline)
+                ProfileTabRootView()
+                    .tag(MainTab.profile)
+                    .tabItem {
+                        Image(systemName: MainTab.profile.systemImage)
+                        Text(MainTab.profile.title)
+                    }
             }
-            .tabItem {
-                Image(systemName: "person.crop.circle")
-                Text("Профиль")
+            .toolbar(.hidden, for: .tabBar)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // Spacer to prevent content from being covered by tab bar
+                Color.clear
+                    .frame(height: HomeStyle.Layout.tabBarHeight)
             }
+            .tint(Color.travelBuddyOrange)
+            .sheet(isPresented: $gatingManager.isAuthModalPresented) {
+                PaywallView(
+                    subtitle: gatingManager.gatingMessage,
+                    dayNumber: gatingManager.pendingAction?.dayNumber,
+                    onAuthSuccess: {
+                        gatingManager.handleAuthSuccess()
+                    }
+                )
+                .interactiveDismissDisabled(false)
+                .onDisappear {
+                    if !AuthManager.shared.isAuthenticated {
+                        gatingManager.cancelPendingAction()
+                        pendingDestinationTab = nil
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .mainTabSelectionRequested)) { notification in
+                guard let tab = notification.object as? MainTab else { return }
+                handleTabSelection(tab)
+            }
+            .environment(\.tabBarVisibility, tabBarVisibility)
+
+            // Single tab bar overlay
+            BottomTabBarView(
+                selectedTab: selectedTab,
+                onSelect: handleTabSelection
+            )
+            .opacity(tabBarVisibility.isVisible ? 1 : 0)
+            .offset(y: tabBarVisibility.isVisible ? 0 : 100)
         }
-        .tint(Color.travelBuddyOrange)
-        .toolbarBackground(Color(red: 0.14, green: 0.14, blue: 0.13), for: .tabBar)
-        .toolbarBackground(.visible, for: .tabBar)
-        .toolbarColorScheme(.dark, for: .tabBar)
+    }
+
+    private func handleTabSelection(_ tab: MainTab) {
+        guard let protectedAction = tab.protectedAction else {
+            selectedTab = tab
+            pendingDestinationTab = nil
+            return
+        }
+
+        if AuthManager.shared.isAuthenticated {
+            selectedTab = tab
+            pendingDestinationTab = nil
+            return
+        }
+
+        pendingDestinationTab = tab
+        gatingManager.requireAuth(for: protectedAction) {
+            guard let pendingTab = pendingDestinationTab else { return }
+            selectedTab = pendingTab
+            pendingDestinationTab = nil
+        }
     }
 }
 

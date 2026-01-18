@@ -8,12 +8,20 @@
 import SwiftUI
 
 struct AccountSheet: View {
+    let title: String
+    let showsDoneButton: Bool
+
     @Environment(\.dismiss) private var dismiss
     @StateObject private var authManager = AuthManager.shared
 
     @State private var isLoading: Bool = false
     @State private var message: String?
     @State private var isError: Bool = false
+
+    init(title: String = "Аккаунт", showsDoneButton: Bool = true) {
+        self.title = title
+        self.showsDoneButton = showsDoneButton
+    }
 
     var body: some View {
         NavigationView {
@@ -83,12 +91,14 @@ struct AccountSheet: View {
                     .padding(.bottom, 8)
             }
             .padding(24)
-            .navigationTitle("Аккаунт")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Готово") {
-                        dismiss()
+                if showsDoneButton {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Готово") {
+                            dismiss()
+                        }
                     }
                 }
             }

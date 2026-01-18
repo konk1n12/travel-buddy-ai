@@ -52,6 +52,7 @@ struct FlightTicketInputView: View {
         .safeAreaInset(edge: .bottom) {
             bottomButton
         }
+        .hideTabBar()
         .background(
             NavigationLink(
                 destination: NewTripView(prefilledTicket: foundTicket),

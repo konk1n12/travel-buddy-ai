@@ -12,6 +12,7 @@ from src.infrastructure.database import get_db
 from src.infrastructure.models import TripModel
 from src.application.trip_spec import TripSpecCollector
 from src.domain.schemas import TripCreateRequest, TripUpdateRequest, TripResponse
+from src.i18n import t
 from src.auth.dependencies import (
     get_auth_context,
     AuthContext,
@@ -118,7 +119,7 @@ async def get_trip(
     if not trip_response:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Trip with ID {trip_id} not found"
+            detail=t("errors.trip_not_found", trip_id=str(trip_id))
         )
 
     # Check ownership
@@ -130,7 +131,7 @@ async def get_trip(
     if not check_trip_ownership(trip, auth):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have access to this trip"
+            detail=t("errors.access_denied")
         )
 
     return trip_response
@@ -162,13 +163,13 @@ async def update_trip(
     if not trip:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Trip with ID {trip_id} not found"
+            detail=t("errors.trip_not_found", trip_id=str(trip_id))
         )
 
     if not check_trip_ownership(trip, auth):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have access to this trip"
+            detail=t("errors.access_denied")
         )
 
     collector = TripSpecCollector()
@@ -177,7 +178,7 @@ async def update_trip(
     if not trip_response:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Trip with ID {trip_id} not found"
+            detail=t("errors.trip_not_found", trip_id=str(trip_id))
         )
 
     return trip_response

@@ -10,6 +10,7 @@ from src.infrastructure.database import get_db
 from src.infrastructure.models import TripModel, ItineraryModel
 from src.application.trip_planner import TripPlannerOrchestrator
 from src.domain.schemas import ItineraryResponse
+from src.i18n import t
 from src.auth.dependencies import (
     get_auth_context,
     AuthContext,
@@ -67,13 +68,13 @@ async def plan_trip(
     if not trip:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Trip with ID {trip_id} not found"
+            detail=t("errors.trip_not_found", trip_id=str(trip_id))
         )
 
     if not check_trip_ownership(trip, auth):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have access to this trip"
+            detail=t("errors.access_denied")
         )
 
     itinerary_result = await db.execute(
@@ -106,13 +107,13 @@ async def plan_trip(
         else:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to generate trip plan: {error_msg}"
+                detail=t("errors.plan_failed", error=error_msg)
             )
 
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error during planning: {str(e)}"
+            detail=t("errors.unexpected_error", error=str(e))
         )
 
 
@@ -149,13 +150,13 @@ async def get_itinerary(
     if not trip:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Trip with ID {trip_id} not found"
+            detail=t("errors.trip_not_found", trip_id=str(trip_id))
         )
 
     if not check_trip_ownership(trip, auth):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have access to this trip"
+            detail=t("errors.access_denied")
         )
 
     orchestrator = TripPlannerOrchestrator()
@@ -174,11 +175,11 @@ async def get_itinerary(
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
+            detail=t("errors.itinerary_not_found")
         )
 
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(e)}"
+            detail=t("errors.unexpected_error", error=str(e))
         )

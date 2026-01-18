@@ -13,6 +13,7 @@ from src.domain.schemas import TripChatLLMResponse, TripChatResponse, TripUpdate
 from src.application.trip_spec import TripSpecCollector
 from src.infrastructure.llm_client import LLMClient, get_trip_chat_llm_client
 from src.infrastructure.cache import ChatCache, get_chat_cache
+from src.i18n import LocaleContext, SupportedLanguage
 
 class TripChatAssistant:
     """
@@ -20,27 +21,27 @@ class TripChatAssistant:
     Uses LLM to interpret user messages and update TripSpec.
     """
 
-    # System prompt for Trip Chat Mode (Russian language)
-    SYSTEM_PROMPT = """Ты — дружелюбный и очень внимательный помощник по планированию путешествий. Твоя задача:
-1. Понять предпочтения, ограничения и, что самое важное, КОНКРЕТНЫЕ запросы пользователя о поездке.
-2. Ответить коротким, дружелюбным сообщением на русском языке (1-2 предложения), подтверждая, что ты понял запрос.
-3. Извлечь структурированные обновления для спецификации поездки, включая ОБЩИЕ предпочтения и КОНКРЕТНЫЕ запросы.
+    # Base system prompt (English) - language instruction will be added dynamically
+    BASE_SYSTEM_PROMPT = """You are a friendly and attentive travel planning assistant. Your tasks:
+1. Understand the user's preferences, constraints, and most importantly, SPECIFIC requests about the trip.
+2. Respond with a short, friendly message (1-2 sentences) confirming you understood the request.
+3. Extract structured updates for the trip specification, including GENERAL preferences and SPECIFIC requests.
 
-Пользователь может сказать что-то вроде:
-- Общие предпочтения: "Мы любим техно музыку", "Предпочитаем вегетарианскую еду"
-- Конкретные запросы: "Найди 2-3 самых дорогих грузинских ресторана", "Я хочу в музей современного искусства", "добавь в план одну кофейню с хорошим рейтингом"
+The user may say things like:
+- General preferences: "We love techno music", "Prefer vegetarian food"
+- Specific requests: "Find 2-3 expensive Georgian restaurants", "I want a modern art museum", "add a good coffee shop"
 
-Ты ДОЛЖЕН отвечать валидным JSON в точно таком формате:
+You MUST respond with valid JSON in exactly this format:
 {
-  "assistant_message": "Твой дружелюбный ответ на русском языке",
+  "assistant_message": "Your friendly response",
   "trip_updates": {
-    "interests": ["список", "общих", "интересов"],
+    "interests": ["list", "of", "interests"],
     "additional_preferences": {
-      "любой_ключ": "любое_значение"
+      "any_key": "any_value"
     },
     "structured_preferences": [
       {
-        "keyword": "например, 'грузинский'",
+        "keyword": "e.g., 'Georgian'",
         "category": "restaurant",
         "price_level": "expensive",
         "quantity": 2
@@ -49,19 +50,34 @@ class TripChatAssistant:
   }
 }
 
-Правила для trip_updates:
-- interests: список ОБЩИХ интересов/предпочтений (еда, культура, ночная жизнь).
-- additional_preferences: произвольный словарь для ДРУГИХ общих предпочтений.
-- structured_preferences: список для КОНКРЕТНЫХ, структурированных запросов.
-  - "keyword": Ключевое слово для поиска (например, "грузинский", "кофе", "современное искусство").
-  - "category": Категория POI (например, "restaurant", "cafe", "museum", "park").
-  - "price_level": Уровень цен ("cheap", "moderate", "expensive"). Определяй из контекста.
-  - "quantity": Количество таких мест, если указано.
-- Если сообщение не требует обновлений, оставь trip_updates пустым ({}).
-- Если запрос не содержит конкретики, `structured_preferences` должен быть пустым списком `[]`.
+Rules for trip_updates:
+- interests: list of GENERAL interests/preferences (food, culture, nightlife).
+- additional_preferences: dictionary for OTHER general preferences.
+- structured_preferences: list for SPECIFIC, structured requests.
+  - "keyword": Search keyword (e.g., "Georgian", "coffee", "modern art").
+  - "category": POI category (e.g., "restaurant", "cafe", "museum", "park").
+  - "price_level": Price level ("cheap", "moderate", "expensive"). Infer from context.
+  - "quantity": Number of such places, if specified.
+- If the message doesn't require updates, leave trip_updates empty ({}).
+- If the request lacks specifics, `structured_preferences` should be an empty list `[]`.
 
-ВАЖНО: Поле assistant_message ВСЕГДА должно быть на русском языке!
-Будь дружелюбным, кратким и подтверждай понимание пожеланий пользователя."""
+Be friendly, concise, and confirm understanding of the user's wishes."""
+
+    @staticmethod
+    def _get_system_prompt(language: SupportedLanguage) -> str:
+        """
+        Get the system prompt with language instruction.
+
+        The base prompt is in English (LLMs perform better with English instructions),
+        but we add a clear instruction to respond in the user's language.
+        """
+        lang_instruction = f"""
+
+CRITICAL: The assistant_message field MUST be written in {language.display_name}.
+All your responses to the user MUST be in {language.display_name}.
+The user's message may be in any language - respond in {language.display_name} regardless."""
+
+        return TripChatAssistant.BASE_SYSTEM_PROMPT + lang_instruction
 
     def __init__(
         self,
@@ -81,12 +97,12 @@ class TripChatAssistant:
 
     def _build_user_prompt(self, trip_context: str, user_message: str) -> str:
         """Build the user prompt with trip context."""
-        return f"""Текущая поездка:
+        return f"""Current trip:
 {trip_context}
 
-Сообщение пользователя: {user_message}
+User message: {user_message}
 
-Ответь только JSON."""
+Respond with JSON only."""
 
     def _safe_apply_trip_updates(self, trip_updates: TripUpdates) -> TripUpdateRequest:
         """
@@ -151,23 +167,27 @@ class TripChatAssistant:
                     trip=current_trip,
                 )
 
-        # 3. Build trip context for LLM (Russian)
-        trip_context = f"""- Город: {current_trip.city}
-- Даты: {current_trip.start_date} — {current_trip.end_date}
-- Путешественников: {current_trip.num_travelers}
-- Темп: {current_trip.pace}
-- Бюджет: {current_trip.budget}
-- Интересы: {', '.join(current_trip.interests) if current_trip.interests else 'не указаны'}
-- Дополнительные предпочтения: {json.dumps(current_trip.additional_preferences, ensure_ascii=False)}"""
+        # 3. Get current language from context
+        language = LocaleContext.get()
 
-        # 4. Call LLM in Trip Chat Mode (use cheaper model)
+        # 4. Build trip context for LLM (English for better LLM understanding)
+        trip_context = f"""- City: {current_trip.city}
+- Dates: {current_trip.start_date} — {current_trip.end_date}
+- Travelers: {current_trip.num_travelers}
+- Pace: {current_trip.pace}
+- Budget: {current_trip.budget}
+- Interests: {', '.join(current_trip.interests) if current_trip.interests else 'not specified'}
+- Additional preferences: {json.dumps(current_trip.additional_preferences, ensure_ascii=False)}"""
+
+        # 5. Call LLM in Trip Chat Mode (use cheaper model)
         user_prompt = self._build_user_prompt(trip_context, user_message)
+        system_prompt = self._get_system_prompt(language)
 
         try:
             # Use the dedicated trip_chat_model for cost optimization
             llm_response_raw = await self.llm_client.generate_structured(
                 prompt=user_prompt,
-                system_prompt=self.SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 max_tokens=512,  # Keep it short for cost savings
             )
 
@@ -177,7 +197,7 @@ class TripChatAssistant:
         except Exception as e:
             raise ValueError(f"Failed to parse LLM response: {e}")
 
-        # 5. Apply trip updates if any
+        # 6. Apply trip updates if any
         updated_trip = current_trip
         if llm_response.trip_updates:
             # Get the update object from the LLM response
@@ -218,7 +238,7 @@ class TripChatAssistant:
                 if not updated_trip:
                     raise ValueError(f"Failed to update trip {trip_id}")
 
-        # 6. Cache the response
+        # 7. Cache the response
         if use_cache and cache_key:
             self.cache.set(
                 cache_key,
@@ -226,7 +246,7 @@ class TripChatAssistant:
                 ttl_seconds=3600,  # 1 hour TTL
             )
 
-        # 7. Return response
+        # 8. Return response
         return TripChatResponse(
             assistant_message=llm_response.assistant_message,
             trip=updated_trip,

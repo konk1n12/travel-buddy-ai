@@ -1,0 +1,59 @@
+{
+  "errors": {
+    "trip_not_found": "未找到ID为 {trip_id} 的行程",
+    "access_denied": "您没有访问此行程的权限",
+    "place_not_found": "未找到指定的地点",
+    "macro_plan_failed": "生成计划失败：{error}",
+    "macro_plan_not_found": "未找到行程 {trip_id} 的计划",
+    "plan_failed": "生成行程计划失败：{error}",
+    "itinerary_not_found": "未找到行程。请先生成计划。",
+    "day_not_found": "在行程中未找到第 {day_id} 天",
+    "apply_changes_failed": "应用更改失败：{error}",
+    "unexpected_error": "意外错误：{error}",
+    "auth_failed": "认证失败：{error}",
+    "otp_send_failed": "发送验证码失败：{error}",
+    "verification_failed": "验证失败：{error}",
+    "token_refresh_failed": "刷新令牌失败：{error}",
+    "logout_failed": "登出失败：{error}",
+    "invalid_request": "无效请求。请检查您的输入。"
+  },
+  "critique": {
+    "day_too_busy": "第 {day_number} 天有 {hours} 小时的活动，对于「{pace}」节奏来说可能过于紧张。",
+    "missing_breakfast": "第 {day_number} 天没有安排早餐。",
+    "missing_lunch": "第 {day_number} 天没有安排午餐。",
+    "missing_dinner": "第 {day_number} 天没有安排晚餐。",
+    "end_before_start": "第 {day_number} 天，时段 {block}：结束时间早于开始时间。",
+    "blocks_overlap": "第 {day_number} 天：时段 {block1} 与时段 {block2} 重叠。",
+    "long_travel": "第 {day_number} 天，时段 {block}：从上一地点的交通时间较长（{minutes} 分钟）。",
+    "nightlife_vs_sleep": "第 {day_number} 天：夜生活活动可能与计划的睡眠时间冲突。",
+    "consecutive_intense": "第 {start} 至 {end} 天：连续 {count} 天行程较紧。建议添加一天较轻松的安排。",
+    "poi_closed": "第 {day_number} 天，时段 {block}：{poi_name} 在计划时间可能已关闭。"
+  },
+  "day_summary": {
+    "empty_day": "{city}的第 {day_number} 天等待您的规划。",
+    "default_summary": "在{city}度过{tempo}的一天。",
+    "with_theme": "在{city}度过以{theme}为主题的{tempo}一天。"
+  },
+  "tempo": {
+    "low": "悠闲",
+    "medium": "适中",
+    "high": "紧凑"
+  },
+  "presets": {
+    "overview": "概览",
+    "food": "美食",
+    "walks": "漫步",
+    "avoid_crowds": "避开人群",
+    "art": "艺术",
+    "architecture": "建筑",
+    "cozy": "惬意",
+    "nightlife": "夜生活"
+  },
+  "block_types": {
+    "activity": "活动",
+    "meal": "用餐",
+    "nightlife": "夜生活",
+    "rest": "休息",
+    "travel": "交通"
+  }
+}

@@ -133,6 +133,7 @@ struct EditDayView: View {
                 Text(activity.title)
             }
         )
+        .hideTabBar()
     }
 
     // MARK: - Day Header

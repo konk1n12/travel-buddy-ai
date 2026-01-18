@@ -56,6 +56,9 @@ struct RequestBuilder {
             request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         }
 
+        // Add language header for localization
+        request.setValue(LocaleManager.shared.apiLanguageCode, forHTTPHeaderField: "X-Language")
+
         // Set body if provided
         if let body = body {
             request.httpBody = body

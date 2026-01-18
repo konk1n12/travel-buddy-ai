@@ -1,0 +1,59 @@
+{
+  "errors": {
+    "trip_not_found": "Reise mit ID {trip_id} nicht gefunden",
+    "access_denied": "Sie haben keinen Zugriff auf diese Reise",
+    "place_not_found": "Ort für die angegebene ID nicht gefunden",
+    "macro_plan_failed": "Plan konnte nicht erstellt werden: {error}",
+    "macro_plan_not_found": "Kein Plan für Reise {trip_id} gefunden",
+    "plan_failed": "Reiseplan konnte nicht erstellt werden: {error}",
+    "itinerary_not_found": "Reiseroute nicht gefunden. Bitte erstellen Sie zuerst einen Plan.",
+    "day_not_found": "Tag {day_id} in der Reiseroute nicht gefunden",
+    "apply_changes_failed": "Änderungen konnten nicht angewendet werden: {error}",
+    "unexpected_error": "Unerwarteter Fehler: {error}",
+    "auth_failed": "Authentifizierung fehlgeschlagen: {error}",
+    "otp_send_failed": "Code konnte nicht gesendet werden: {error}",
+    "verification_failed": "Verifizierung fehlgeschlagen: {error}",
+    "token_refresh_failed": "Token-Aktualisierung fehlgeschlagen: {error}",
+    "logout_failed": "Abmeldung fehlgeschlagen: {error}",
+    "invalid_request": "Ungültige Anfrage. Bitte überprüfen Sie Ihre Eingaben."
+  },
+  "critique": {
+    "day_too_busy": "Tag {day_number} hat {hours} Stunden Aktivitäten, was für ein «{pace}» Tempo zu intensiv sein könnte.",
+    "missing_breakfast": "Tag {day_number} hat kein Frühstück eingeplant.",
+    "missing_lunch": "Tag {day_number} hat kein Mittagessen eingeplant.",
+    "missing_dinner": "Tag {day_number} hat kein Abendessen eingeplant.",
+    "end_before_start": "Tag {day_number}, Block {block}: Endzeit liegt vor der Startzeit.",
+    "blocks_overlap": "Tag {day_number}: Block {block1} überschneidet sich mit Block {block2}.",
+    "long_travel": "Tag {day_number}, Block {block}: Lange Reisezeit ({minutes} Minuten) vom vorherigen Standort.",
+    "nightlife_vs_sleep": "Tag {day_number}: Nachtleben-Aktivitäten könnten mit dem geplanten Schlafplan kollidieren.",
+    "consecutive_intense": "Tage {start}-{end}: {count} intensive Tage hintereinander. Erwägen Sie, einen leichteren Tag hinzuzufügen.",
+    "poi_closed": "Tag {day_number}, Block {block}: {poi_name} könnte zur geplanten Zeit geschlossen sein."
+  },
+  "day_summary": {
+    "empty_day": "Tag {day_number} in {city} wartet auf Ihre Planung.",
+    "default_summary": "Ein {tempo} Tag zur Erkundung von {city}.",
+    "with_theme": "Ein {tempo} Tag mit Schwerpunkt auf {theme} in {city}."
+  },
+  "tempo": {
+    "low": "entspannter",
+    "medium": "ausgewogener",
+    "high": "vollgepackter"
+  },
+  "presets": {
+    "overview": "Überblick",
+    "food": "kulinarisch",
+    "walks": "Spaziergang",
+    "avoid_crowds": "abseits der Massen",
+    "art": "künstlerisch",
+    "architecture": "architektonisch",
+    "cozy": "gemütlich",
+    "nightlife": "abendlich"
+  },
+  "block_types": {
+    "activity": "Aktivität",
+    "meal": "Mahlzeit",
+    "nightlife": "Nachtleben",
+    "rest": "Ruhe",
+    "travel": "Anreise"
+  }
+}

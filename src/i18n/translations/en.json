@@ -1,0 +1,59 @@
+{
+  "errors": {
+    "trip_not_found": "Trip with ID {trip_id} not found",
+    "access_denied": "You don't have access to this trip",
+    "place_not_found": "Place not found for provided POI id",
+    "macro_plan_failed": "Failed to generate macro plan: {error}",
+    "macro_plan_not_found": "No macro plan found for trip {trip_id}",
+    "plan_failed": "Failed to generate trip plan: {error}",
+    "itinerary_not_found": "Itinerary not found. Please generate a plan first.",
+    "day_not_found": "Day {day_id} not found in itinerary",
+    "apply_changes_failed": "Failed to apply changes: {error}",
+    "unexpected_error": "Unexpected error: {error}",
+    "auth_failed": "Authentication failed: {error}",
+    "otp_send_failed": "Failed to send OTP: {error}",
+    "verification_failed": "Verification failed: {error}",
+    "token_refresh_failed": "Token refresh failed: {error}",
+    "logout_failed": "Logout failed: {error}",
+    "invalid_request": "Invalid request. Please check your input."
+  },
+  "critique": {
+    "day_too_busy": "Day {day_number} has {hours} hours of activities, which may be too intense for a {pace} pace.",
+    "missing_breakfast": "Day {day_number} is missing breakfast.",
+    "missing_lunch": "Day {day_number} is missing lunch.",
+    "missing_dinner": "Day {day_number} is missing dinner.",
+    "end_before_start": "Day {day_number}, block {block}: End time is before start time.",
+    "blocks_overlap": "Day {day_number}: Block {block1} overlaps with block {block2}.",
+    "long_travel": "Day {day_number}, block {block}: Long travel time ({minutes} minutes) from previous location.",
+    "nightlife_vs_sleep": "Day {day_number}: Nightlife activity may conflict with planned sleep schedule.",
+    "consecutive_intense": "Days {start}-{end}: {count} consecutive intense days. Consider adding a lighter day.",
+    "poi_closed": "Day {day_number}, block {block}: {poi_name} may be closed at the scheduled time."
+  },
+  "day_summary": {
+    "empty_day": "Day {day_number} in {city} awaits your planning.",
+    "default_summary": "A {tempo} day exploring {city}.",
+    "with_theme": "A {tempo} day focused on {theme} in {city}."
+  },
+  "tempo": {
+    "low": "relaxed",
+    "medium": "balanced",
+    "high": "packed"
+  },
+  "presets": {
+    "overview": "overview",
+    "food": "gastronomic",
+    "walks": "walking",
+    "avoid_crowds": "crowd-free",
+    "art": "artistic",
+    "architecture": "architectural",
+    "cozy": "cozy",
+    "nightlife": "evening"
+  },
+  "block_types": {
+    "activity": "Activity",
+    "meal": "Meal",
+    "nightlife": "Nightlife",
+    "rest": "Rest",
+    "travel": "Travel"
+  }
+}

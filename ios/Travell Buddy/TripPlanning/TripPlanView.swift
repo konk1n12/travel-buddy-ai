@@ -23,6 +23,11 @@ struct TripPlanView: View {
     @State private var paywallError: String?
     @State private var isMapInteracting: Bool = false
     @State private var replaceSheetActivity: TripActivity?
+    @State private var showSaveToast: Bool = false
+    @State private var saveToastMessage: String = ""
+    @State private var isTripAlreadySaved: Bool = false
+    @State private var isSaving: Bool = false
+    @StateObject private var savedTripsManager = SavedTripsManager.shared
     @Environment(\.dismiss) private var dismiss
     private let ctaHeight: CGFloat = 72
 
@@ -43,7 +48,7 @@ struct TripPlanView: View {
                         }
                         .padding(.top, 12)
                         .padding(.horizontal, 16)
-                        .padding(.bottom, ctaHeight + 16)
+                        .padding(.bottom, 16)
                     }
                     .scrollDisabled(isMapInteracting)
                 }
@@ -54,7 +59,7 @@ struct TripPlanView: View {
                     print("📱 Photo URL: \(String(describing: cityPhotoURL(for: plan)))")
                     print("📱 Selected tab: \(viewModel.selectedTab)")
                 }
-                .safeAreaInset(edge: .bottom) {
+                .safeAreaInset(edge: .bottom, spacing: 0) {
                     guideCTA(height: ctaHeight)
                 }
                 .background(editDayNavigationLink)
@@ -108,8 +113,16 @@ struct TripPlanView: View {
                 }
             }
         }
+        .overlay(alignment: .top) {
+            if showSaveToast {
+                SaveToastView(message: saveToastMessage)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(100)
+            }
+        }
         .background(backgroundLayer.ignoresSafeArea())
         .navigationBarHidden(true)
+        .hideTabBar()
         .background(chatNavigationLink)
         .onChange(of: viewModel.isShowingPaywall) { newValue in
             showPaywall = newValue
@@ -299,7 +312,7 @@ struct TripPlanView: View {
                     Spacer()
                     glassIconButton(systemName: "square.and.arrow.up") {
                     }
-                    glassIconButton(systemName: "ellipsis") {
+                    glassIconButton(systemName: "bubble.left.fill") {
                         openChat()
                     }
                 }
@@ -661,7 +674,54 @@ struct TripPlanView: View {
     }
 
     private func guideCTA(height: CGFloat) -> some View {
-        ZStack {
+        VStack(spacing: 0) {
+            Button {
+                handleSaveTripTap()
+            } label: {
+                HStack(spacing: 12) {
+                    if isSaving {
+                        ProgressView()
+                            .tint(.white)
+                            .frame(width: 32, height: 32)
+                    } else {
+                        Image(systemName: isTripAlreadySaved ? "checkmark" : "bookmark.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 32, height: 32)
+                            .background(
+                                Circle()
+                                    .fill(Color.white.opacity(0.2))
+                            )
+                    }
+                    Text(isTripAlreadySaved ? "Маршрут сохранён" : "Сохранить маршрут")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                    Spacer()
+                    if !isTripAlreadySaved && !isSaving {
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(Color.white.opacity(0.2))
+                            )
+                    }
+                }
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity)
+                .frame(height: height)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(isTripAlreadySaved ? Color.green.opacity(0.8) : Color.travelBuddyOrange)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isSaving || isTripAlreadySaved)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+        }
+        .background(
             LinearGradient(
                 colors: [
                     Color(red: 0.10, green: 0.10, blue: 0.12).opacity(0.0),
@@ -670,43 +730,77 @@ struct TripPlanView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
-            Button {
-                isShowingGuide = true
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "location.north.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white)
-                        .frame(width: 32, height: 32)
-                        .background(
-                            Circle()
-                                .fill(Color.white.opacity(0.2))
-                        )
-                    Text("Начать путешествие с гидом")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            Circle()
-                                .fill(Color.white.opacity(0.2))
-                        )
-                }
-                .padding(.horizontal, 16)
-                .frame(maxWidth: .infinity)
-                .frame(height: height)
-                .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(Color.travelBuddyOrange)
+            .ignoresSafeArea(edges: .bottom)
+        )
+    }
+
+    private func handleSaveTripTap() {
+        guard let plan = viewModel.plan else { return }
+
+        let heroImageUrl = cityPhotoURL(for: plan)?.absoluteString
+
+        if AuthManager.shared.isAuthenticated {
+            // User is logged in - save directly
+            performSaveTrip(plan: plan, heroImageUrl: heroImageUrl)
+        } else {
+            // Guest - show auth modal with pending action
+            gatingManager.requireAuth(
+                for: .saveTrip(
+                    tripId: plan.tripId,
+                    cityName: plan.destinationCity,
+                    startDate: plan.startDate,
+                    endDate: plan.endDate,
+                    heroImageUrl: heroImageUrl
                 )
+            ) { [self] in
+                // This callback is executed after successful auth
+                performSaveTrip(plan: plan, heroImageUrl: heroImageUrl)
             }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 16)
         }
-        .frame(height: height)
+    }
+
+    private func performSaveTrip(plan: TripPlan, heroImageUrl: String?) {
+        isSaving = true
+
+        Task {
+            let result = await savedTripsManager.saveTrip(
+                tripId: plan.tripId,
+                cityName: plan.destinationCity,
+                startDate: plan.startDate,
+                endDate: plan.endDate,
+                heroImageUrl: heroImageUrl
+            )
+
+            await MainActor.run {
+                isSaving = false
+
+                if let card = result {
+                    isTripAlreadySaved = true
+                    if card.alreadySaved {
+                        saveToastMessage = "Маршрут уже сохранён"
+                    } else {
+                        saveToastMessage = "Маршрут успешно сохранён"
+                    }
+                    showToast()
+                } else {
+                    saveToastMessage = "Не удалось сохранить маршрут"
+                    showToast()
+                }
+            }
+        }
+    }
+
+    private func showToast() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            showSaveToast = true
+        }
+
+        // Auto-dismiss after 1.8s
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+            withAnimation(.easeOut(duration: 0.3)) {
+                showSaveToast = false
+            }
+        }
     }
 
     private func glassIconButton(systemName: String, action: @escaping () -> Void) -> some View {
@@ -1116,5 +1210,32 @@ extension TripPlanView {
         withAnimation(.easeInOut(duration: 0.3)) {
             viewModel.replaceActivity(at: dayIndex, activityIndex: activityIndex, with: replacement)
         }
+    }
+}
+
+// MARK: - Save Toast View
+
+private struct SaveToastView: View {
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(.green)
+
+            Text(message)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(
+            Capsule()
+                .fill(Color(red: 0.15, green: 0.15, blue: 0.17).opacity(0.95))
+                .background(.ultraThinMaterial, in: Capsule())
+                .shadow(color: Color.black.opacity(0.3), radius: 12, x: 0, y: 6)
+        )
+        .padding(.top, 60)
     }
 }
