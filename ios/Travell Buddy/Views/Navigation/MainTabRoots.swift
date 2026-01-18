@@ -12,6 +12,7 @@ struct HomeTabRootView: View {
         NavigationStack {
             HomeView()
         }
+        .toolbar(.hidden, for: .navigationBar)
     }
 }
 
