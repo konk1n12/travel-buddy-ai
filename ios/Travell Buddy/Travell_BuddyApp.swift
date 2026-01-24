@@ -14,6 +14,7 @@ import UIKit
 @main
 struct Travell_BuddyApp: App {
     @State private var showSplash: Bool = true
+    @StateObject private var authManager = AuthManager.shared
 
     init() {
         configureTabBarAppearance()
@@ -28,8 +29,13 @@ struct Travell_BuddyApp: App {
                             showSplash = false
                         }
                     }
+                    .task {
+                        // Запускаем проверку авторизации во время показа splash screen
+                        await authManager.restoreSessionOnLaunch()
+                    }
                 } else {
-                    RootView()
+                    // После splash показываем сразу MainTabView без дополнительного loading экрана
+                    MainTabView()
                 }
             }
             .onOpenURL { url in

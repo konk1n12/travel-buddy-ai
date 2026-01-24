@@ -34,42 +34,7 @@ struct TripPlanView: View {
     var body: some View {
         Group {
             if let plan = viewModel.plan {
-                ZStack {
-                    backgroundLayer
-                    ScrollView(showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Text("Маршрут поездки")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.8))
-                            heroSection(plan: plan)
-                            tabSwitcher(plan: plan)
-                            summaryStatsRow(summary: plan.summary)
-                            tabContent(plan: plan)
-                        }
-                        .padding(.top, 12)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
-                    }
-                    .scrollDisabled(isMapInteracting)
-                }
-                .onAppear {
-                    print("📱 TripPlanView appeared with plan for city: \(plan.destinationCity)")
-                    print("📱 Days count: \(plan.days.count)")
-                    print("📱 City Photo Reference: \(plan.cityPhotoReference ?? "nil")")
-                    print("📱 Photo URL: \(String(describing: cityPhotoURL(for: plan)))")
-                    print("📱 Selected tab: \(viewModel.selectedTab)")
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    // Show save button only if:
-                    // 1. Trip is newly generated (not loaded from saved trips), OR
-                    // 2. Trip was loaded from saved trips AND has unsaved changes
-                    if !viewModel.isLoadedFromSavedTrip || viewModel.hasUnsavedChanges {
-                        guideCTA(height: ctaHeight)
-                    }
-                }
-                .background(editDayNavigationLink)
-                .background(aiStudioNavigationLink)
-                .background(guideNavigationLink)
+                planContentView(plan: plan)
             } else if viewModel.isLoading {
                 VStack(spacing: 16) {
                     ProgressView()
@@ -260,6 +225,45 @@ struct TripPlanView: View {
         }
     }
 
+    private func planContentView(plan: TripPlan) -> some View {
+        ZStack(alignment: .bottom) {
+            backgroundLayer
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Маршрут поездки")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.8))
+                    heroSection(plan: plan)
+                    tabSwitcher(plan: plan)
+                    summaryStatsRow(summary: plan.summary)
+                    tabContent(plan: plan)
+                }
+                .padding(.top, 12)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+            }
+            .scrollDisabled(isMapInteracting)
+        }
+        .onAppear {
+            print("📱 TripPlanView appeared with plan for city: \(plan.destinationCity)")
+            print("📱 Days count: \(plan.days.count)")
+            print("📱 City Photo Reference: \(plan.cityPhotoReference ?? "nil")")
+            print("📱 Photo URL: \(String(describing: cityPhotoURL(for: plan)))")
+            print("📱 Selected tab: \(viewModel.selectedTab)")
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            // Show save button only if:
+            // 1. Trip is newly generated (not loaded from saved trips), OR
+            // 2. Trip was loaded from saved trips AND has unsaved changes
+            if !viewModel.isLoadedFromSavedTrip || viewModel.hasUnsavedChanges {
+                guideCTA(height: ctaHeight)
+            }
+        }
+        .background(editDayNavigationLink)
+        .background(aiStudioNavigationLink)
+        .background(guideNavigationLink)
+    }
+
     private func heroSection(plan: TripPlan) -> some View {
         let heroHeight: CGFloat = max(280, UIScreen.main.bounds.height * 0.42)
         let imageURL = cityPhotoURL(for: plan)
@@ -397,20 +401,26 @@ struct TripPlanView: View {
                         // Map will be shown after auth success
                     }
                 }
-                .frame(height: 360)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .padding(.horizontal, -16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minHeight: 400)
+                .clipShape(RoundedRectangle(cornerRadius: 0, style: .continuous))
             } else if !viewModel.currentDayActivitiesWithCoordinates.isEmpty {
                 TripInteractiveMapView(
                     activities: viewModel.currentDayActivitiesWithCoordinates,
                     fallbackCoordinate: plan.cityCoordinate,
                     isInteracting: $isMapInteracting
                 )
-                    .frame(height: 360)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .padding(.horizontal, -16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minHeight: 400)
+                    .clipShape(RoundedRectangle(cornerRadius: 0, style: .continuous))
             } else {
                 NoMapDataView()
-                    .frame(height: 360)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .padding(.horizontal, -16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minHeight: 400)
+                    .clipShape(RoundedRectangle(cornerRadius: 0, style: .continuous))
             }
         }
     }

@@ -25,6 +25,7 @@ struct SplashView: View {
             RouteAnimationLayer(accent: accentOrange)
             SplashContent(accent: accentOrange, duration: delay)
         }
+        .ignoresSafeArea()
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 onFinished()
@@ -38,38 +39,40 @@ private struct SplashContent: View {
     let duration: TimeInterval
 
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
             Spacer()
 
-            VStack(spacing: 22) {
+            VStack(spacing: 24) {
                 GlassLogo(accent: accent)
 
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     Text("Travel Buddy")
-                        .font(.system(size: 40, weight: .heavy, design: .rounded))
+                        .font(.system(size: 42, weight: .heavy, design: .rounded))
                         .foregroundColor(.white)
-                        .shadow(color: Color.black.opacity(0.35), radius: 8, x: 0, y: 6)
+                        .shadow(color: Color.black.opacity(0.5), radius: 10, x: 0, y: 6)
 
                     Text("Твой умный тревел-приятель")
-                        .font(.system(size: 18, weight: .medium, design: .rounded))
-                        .foregroundColor(.white.opacity(0.75))
-                        .shadow(color: Color.black.opacity(0.35), radius: 6, x: 0, y: 4)
+                        .font(.system(size: 17, weight: .medium, design: .rounded))
+                        .foregroundColor(.white.opacity(0.85))
+                        .shadow(color: Color.black.opacity(0.5), radius: 8, x: 0, y: 4)
                 }
                 .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
             }
 
             Spacer()
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 Text("Планируем ваше следующее путешествие…")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white.opacity(0.85))
-                    .shadow(color: Color.black.opacity(0.35), radius: 6, x: 0, y: 4)
+                    .foregroundColor(.white.opacity(0.9))
+                    .shadow(color: Color.black.opacity(0.5), radius: 6, x: 0, y: 3)
 
                 SplashProgressBar(accent: accent, duration: duration)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 32)
-            .padding(.bottom, 32)
+            .padding(.bottom, 50)
         }
     }
 }
@@ -79,19 +82,28 @@ private struct GlassLogo: View {
 
     var body: some View {
         ZStack {
+            // Ultra-subtle backdrop for depth - almost invisible
             Circle()
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.black.opacity(0.15),
+                            Color.black.opacity(0.05),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 20,
+                        endRadius: 60
+                    )
                 )
                 .frame(width: 120, height: 120)
-                .shadow(color: Color.black.opacity(0.25), radius: 18, x: 0, y: 12)
 
             Image(systemName: "mappin.circle.fill")
                 .symbolRenderingMode(.hierarchical)
-                .font(.system(size: 52, weight: .bold))
+                .font(.system(size: 60, weight: .bold))
                 .foregroundColor(accent)
+                .shadow(color: Color.black.opacity(0.6), radius: 8, x: 0, y: 4)
+                .shadow(color: accent.opacity(0.6), radius: 16, x: 0, y: 0)
         }
     }
 }
@@ -104,15 +116,24 @@ private struct SplashProgressBar: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
+                // Thinner, more subtle track
                 Capsule()
-                    .fill(Color.white.opacity(0.15))
+                    .fill(Color.white.opacity(0.1))
 
+                // Accent progress with glow
                 Capsule()
-                    .fill(accent)
+                    .fill(
+                        LinearGradient(
+                            colors: [accent, accent.opacity(0.8)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
                     .frame(width: proxy.size.width * progress)
+                    .shadow(color: accent.opacity(0.6), radius: 4, x: 0, y: 0)
             }
         }
-        .frame(height: 5)
+        .frame(height: 4)
         .onAppear {
             progress = 0
             withAnimation(.linear(duration: duration)) {
@@ -131,36 +152,47 @@ private struct AnimatedMapBackground: View {
     private let targetOffset = CGSize(width: 20, height: -30)
 
     var body: some View {
-        GeometryReader { proxy in
-            Image("launch_map_dark_paris")
-                .resizable()
-                .scaledToFill()
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .scaleEffect(animate ? targetScale : baseScale)
-                .offset(animate ? targetOffset : baseOffset)
-                .clipped()
-                .animation(.easeInOut(duration: 16).repeatForever(autoreverses: true), value: animate)
-        }
-        .ignoresSafeArea()
-        .onAppear {
-            animate = true
-        }
+        Image("launch_map_dark_paris")
+            .resizable()
+            .scaledToFill()
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+            .scaleEffect(animate ? targetScale : baseScale)
+            .offset(animate ? targetOffset : baseOffset)
+            .clipped()
+            .ignoresSafeArea()
+            .animation(.easeInOut(duration: 16).repeatForever(autoreverses: true), value: animate)
+            .onAppear {
+                animate = true
+            }
     }
 }
 
 private struct MapOverlay: View {
     var body: some View {
-        LinearGradient(
-            colors: [
-                Color.black.opacity(0.55),
-                Color.black.opacity(0.18),
-                Color.black.opacity(0.5)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+        ZStack {
+            // Top to bottom vignette
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.55),
+                    Color.black.opacity(0.1),
+                    Color.black.opacity(0.55)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            // Radial vignette from edges
+            RadialGradient(
+                colors: [
+                    Color.clear,
+                    Color.black.opacity(0.2)
+                ],
+                center: .center,
+                startRadius: 100,
+                endRadius: 400
+            )
+        }
         .ignoresSafeArea()
-                .overlay(Color.black.opacity(0.16).ignoresSafeArea())
     }
 }
 

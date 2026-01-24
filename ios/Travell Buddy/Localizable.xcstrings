@@ -649,6 +649,23 @@
         }
       }
     },
+    "chat.messageSending" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending..."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправка..."
+          }
+        }
+      }
+    },
     "chat.online" : {
       "extractionState" : "manual",
       "localizations" : {

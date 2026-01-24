@@ -79,9 +79,10 @@ final class RouteBuildingViewModel: ObservableObject {
 
     // MARK: - Private Properties
 
-    private let tripId: UUID
+    private var tripId: UUID?  // Made optional - will be set after trip creation
     private let cityCoordinate: CLLocationCoordinate2D
     private let apiClient: TripPlanningAPIClientProtocol
+    private let tripRequest: TripCreateRequestDTO?  // Parameters for creating trip
 
     private var demoPOIs: [DemoPOI] = []
     private var animationTimer: Timer?
@@ -93,7 +94,7 @@ final class RouteBuildingViewModel: ObservableObject {
     private var animationStartTime: Date?
 
     // Minimum animation duration in seconds
-    private let minimumAnimationDuration: TimeInterval = 3.0
+    private let minimumAnimationDuration: TimeInterval = 1.0
 
     private let subtitles = [
         "Анализируем ваши интересы",
@@ -108,11 +109,13 @@ final class RouteBuildingViewModel: ObservableObject {
     // MARK: - Init
 
     init(
-        tripId: UUID,
+        tripId: UUID? = nil,
+        tripRequest: TripCreateRequestDTO? = nil,
         cityCoordinate: CLLocationCoordinate2D,
         apiClient: TripPlanningAPIClientProtocol
     ) {
         self.tripId = tripId
+        self.tripRequest = tripRequest
         self.cityCoordinate = cityCoordinate
         self.apiClient = apiClient
 
@@ -163,9 +166,37 @@ final class RouteBuildingViewModel: ObservableObject {
 
     // MARK: - Private Methods
 
+    private func createTrip() async throws -> UUID {
+        guard let tripRequest = tripRequest else {
+            throw APIError.networkError(NSError(domain: "No trip request provided", code: -1))
+        }
+
+        print("🚀 createTrip: creating trip for city \(tripRequest.city)")
+        let tripResponse = try await apiClient.createTrip(tripRequest)
+
+        guard let tripId = UUID(uuidString: tripResponse.id) else {
+            throw APIError.decodingError(NSError(domain: "Invalid trip ID", code: -1))
+        }
+
+        print("✅ createTrip: trip created with ID \(tripId)")
+        return tripId
+    }
+
     private func fetchRoute() async {
-        print("📡 fetchRoute: calling full plan API for trip \(tripId)")
         do {
+            // If we don't have a tripId yet, create the trip first
+            if tripId == nil {
+                print("📡 fetchRoute: creating trip first")
+                let createdTripId = try await createTrip()
+                self.tripId = createdTripId
+            }
+
+            guard let tripId = tripId else {
+                throw APIError.networkError(NSError(domain: "No trip ID available", code: -1))
+            }
+
+            print("📡 fetchRoute: calling full plan API for trip \(tripId)")
+
             // Use full plan endpoint with agentic POI Curator + Route Engineer for maximum personalization
             let itinerary = try await apiClient.generatePlan(tripId: tripId)
             print("✅ fetchRoute: received itinerary with \(itinerary.days.count) days")
@@ -209,7 +240,7 @@ final class RouteBuildingViewModel: ObservableObject {
         // Show remaining POIs quickly
         while currentPOIIndex < demoPOIs.count {
             addNextPOI()
-            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s
+            try? await Task.sleep(nanoseconds: 30_000_000) // 0.03s
         }
 
         animationTimer?.invalidate()

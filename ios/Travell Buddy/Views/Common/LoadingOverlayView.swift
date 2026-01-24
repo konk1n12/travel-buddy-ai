@@ -23,19 +23,24 @@ struct LoadingOverlayView: View {
             VStack(spacing: 16) {
                 ProgressView()
                     .scaleEffect(1.2)
-                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    .progressViewStyle(CircularProgressViewStyle(tint: Color.travelBuddyOrange))
 
                 Text(message)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(.white)
+                    .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
             }
             .padding(.horizontal, 32)
             .padding(.vertical, 24)
             .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(.systemGray).opacity(0.95))
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.black.opacity(0.75))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    )
             )
-            .shadow(color: Color.black.opacity(0.2), radius: 10, x: 0, y: 4)
+            .shadow(color: Color.black.opacity(0.3), radius: 16, x: 0, y: 8)
         }
     }
 }

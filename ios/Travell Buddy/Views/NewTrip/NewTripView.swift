@@ -12,7 +12,7 @@ import MapKit
 
 struct RouteBuildingData: Identifiable {
     let id = UUID()
-    let tripId: UUID
+    let tripRequest: TripCreateRequestDTO
     let cityName: String
     let coordinate: CLLocationCoordinate2D
 }
@@ -56,14 +56,9 @@ struct NewTripView: View {
         return parts.isEmpty ? "Выберите количество" : parts.joined(separator: ", ")
     }
     @State private var selectedBudget: String = "Комфорт"
-    @State private var chatMessages: [ChatMessage] = [
-        ChatMessage(
-            id: UUID(),
-            text: "Расскажи мне о своих пожеланиях: любишь ли ты много ходить, хочешь больше музеев или баров, есть ли ограничения?",
-            isFromUser: false,
-            timestamp: Date()
-        )
-    ]
+
+    // NEW: Unified preferences draft
+    @State private var preferencesDraft = PreferencesDraft()
     @State private var messageText: String = ""
     @FocusState private var isTextFieldFocused: Bool
     @State private var isShowingTripPlan: Bool = false
@@ -71,7 +66,6 @@ struct NewTripView: View {
     @State private var isGeneratingPlan: Bool = false
     @State private var planGenerationError: String?
     @State private var showErrorAlert: Bool = false
-    @State private var currentTripId: UUID?  // Хранит ID созданной поездки для чата
 
     private let warmWhite = Color(red: 0.95, green: 0.94, blue: 0.92)
     private let mutedWarmGray = Color(red: 0.70, green: 0.67, blue: 0.63)
@@ -132,33 +126,47 @@ struct NewTripView: View {
     var body: some View {
         ZStack {
             SmokyBackgroundView()
-            
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    headerSection
 
-                    // Секция: Город / Направление
-                    citySection
-                    
-                    // Секция: Даты поездки + Путешественники
-                    datesTravelersSection
-                    
-                    // Секция: Интересы
-                    interestsSection
-                    
-                    // Секция: Уровень бюджета
-                    budgetSection
-                    
-                    // Секция: Пожелания к поездке
-                    wishesCard
-                    
-                    // Кнопка "Спланировать поездку"
-                    planTripButton
-                        .padding(.top, 8)
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        headerSection
+
+                        // Секция: Город / Направление
+                        citySection
+
+                        // Секция: Даты поездки + Путешественники
+                        datesTravelersSection
+
+                        // Секция: Интересы
+                        interestsSection
+
+                        // Секция: Уровень бюджета
+                        budgetSection
+
+                        // Секция: Пожелания к поездке
+                        wishesCard
+
+                        // Кнопка "Спланировать поездку"
+                        planTripButton
+                            .padding(.top, 8)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 14)
+                    .padding(.bottom, isRootView ? 28 + HomeStyle.Layout.tabBarHeight : 28)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 14)
-                .padding(.bottom, isRootView ? 28 + HomeStyle.Layout.tabBarHeight : 28)
+                .onChange(of: isTextFieldFocused) { focused in
+                    if focused {
+                        // Scroll to wishes card when it's focused/expanded
+                        // Delay to allow expansion animation to start
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                                // Use center anchor for more natural scroll position
+                                scrollProxy.scrollTo("wishes-card", anchor: .center)
+                            }
+                        }
+                    }
+                }
             }
         }
         .modifier(ConditionalHideTabBarModifier(shouldHide: !isRootView))
@@ -182,17 +190,23 @@ struct NewTripView: View {
                 endDate = planning.endDate
             }
         }
+        .onChange(of: selectedInterests) { newInterests in
+            // Sync interests to preferences draft
+            preferencesDraft.selectedTags = newInterests
+        }
+        .onChange(of: messageText) { newText in
+            // Sync unsent message text to freeText
+            preferencesDraft.freeText = newText
+        }
         .fullScreenCover(item: $routeBuildingData, onDismiss: {
             guard pendingTripPlanPresentation else { return }
             pendingTripPlanPresentation = false
-            DispatchQueue.main.async {
-                isShowingTripPlan = true
-            }
+            isShowingTripPlan = true
         }) { data in
             RouteBuildingView(
                 cityName: data.cityName,
                 cityCoordinate: data.coordinate,
-                tripId: data.tripId,
+                tripRequest: data.tripRequest,
                 onRouteReady: { itinerary in
                     Task { @MainActor in
                         // Создаём TripPlan из itinerary
@@ -494,196 +508,12 @@ struct NewTripView: View {
     // MARK: Wishes Card
 
     private var wishesCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(Color.travelBuddyOrange)
-                        .frame(width: 28, height: 28)
-
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-
-                Text("Пожелания")
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
-                    .foregroundColor(warmWhite)
-            }
-
-            Text("Опишите идеальное путешествие, и я подберу маршрут специально для вас.")
-                .font(.system(size: 13))
-                .foregroundColor(mutedWarmGray)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 10) {
-                TextField("Хочу спокойный отдых...", text: $messageText, axis: .vertical)
-                    .font(.system(size: 14))
-                    .foregroundColor(warmWhite)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.06))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                    )
-                    .focused($isTextFieldFocused)
-                    .lineLimit(1...3)
-
-                Button {
-                    sendMessage()
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 36, height: 36)
-                        .background(
-                            Circle()
-                                .fill(Color.travelBuddyOrange)
-                        )
-                }
-                .buttonStyle(.plain)
-                .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-
-            HStack(spacing: 8) {
-                ForEach(["Спокойный темп", "Без перелетов"], id: \.self) { tag in
-                    Button(action: {}) {
-                        Text(tag)
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundColor(mutedWarmGray)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule()
-                                    .fill(Color.white.opacity(0.06))
-                            )
-                            .overlay(
-                                Capsule()
-                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(glassFill)
+        ExpandableWishesCard(
+            messageText: $messageText,
+            preferencesDraft: $preferencesDraft,
+            isTextFieldFocused: $isTextFieldFocused,
+            tripId: nil  // Demo mode - no backend required
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(glassBorder, lineWidth: 1)
-        )
-    }
-    
-    private func sendMessage() {
-        let trimmedText = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty else { return }
-
-        // Add user message to chat
-        let newMessage = ChatMessage(
-            id: UUID(),
-            text: trimmedText,
-            isFromUser: true,
-            timestamp: Date()
-        )
-
-        withAnimation {
-            chatMessages.append(newMessage)
-        }
-
-        messageText = ""
-        isTextFieldFocused = false
-
-        // Send message to backend API
-        Task {
-            do {
-                // Create trip if it doesn't exist yet
-                if currentTripId == nil {
-                    let apiClient = TripPlanningAPIClient()
-
-                    // Format dates
-                    let dateFormatter = DateFormatter()
-                    dateFormatter.dateFormat = "yyyy-MM-dd"
-                    let startDateString = dateFormatter.string(from: self.startDate)
-                    let endDateString = dateFormatter.string(from: self.endDate)
-
-                    // Create trip with current parameters
-                    let tripRequest = TripCreateRequestDTO(
-                        city: self.selectedCity,
-                        startDate: startDateString,
-                        endDate: endDateString,
-                        numTravelers: self.adultsCount + self.childrenCount,
-                        pace: "medium",
-                        budget: self.mapBudgetToAPI(self.selectedBudget),
-                        interests: Array(self.selectedInterests).sorted(),
-                        dailyRoutine: nil,
-                        hotelLocation: nil,
-                        additionalPreferences: nil
-                    )
-
-                    let tripResponse = try await apiClient.createTrip(tripRequest)
-
-                    guard let tripId = UUID(uuidString: tripResponse.id) else {
-                        throw APIError.decodingError(NSError(domain: "Invalid trip ID", code: -1))
-                    }
-
-                    await MainActor.run {
-                        self.currentTripId = tripId
-                        print("✅ Trip created for chat: \(tripId)")
-                    }
-                }
-
-                // Send chat message
-                guard let tripId = currentTripId else {
-                    throw APIError.networkError(NSError(domain: "No trip ID available", code: -1))
-                }
-
-                let apiClient = TripPlanningAPIClient()
-                let chatResponse = try await apiClient.sendChatMessage(tripId: tripId, message: trimmedText)
-
-                // Add AI response to chat
-                await MainActor.run {
-                    let aiMessage = ChatMessage(
-                        id: UUID(),
-                        text: chatResponse.assistantMessage,
-                        isFromUser: false,
-                        timestamp: Date()
-                    )
-                    withAnimation {
-                        chatMessages.append(aiMessage)
-                    }
-
-                    // Update local state with potentially changed trip parameters
-                    // (interests might have been updated by chat)
-                    if !chatResponse.trip.interests.isEmpty {
-                        // Convert English interests back to Russian for UI display
-                        // This is a simplified version - you might want a reverse mapping
-                        self.selectedInterests = Set(chatResponse.trip.interests)
-                    }
-                }
-
-            } catch {
-                // Show error message in chat
-                await MainActor.run {
-                    let errorMessage = ChatMessage(
-                        id: UUID(),
-                        text: "Ошибка: не удалось отправить сообщение. \(error.localizedDescription)",
-                        isFromUser: false,
-                        timestamp: Date()
-                    )
-                    withAnimation {
-                        chatMessages.append(errorMessage)
-                    }
-                }
-                print("❌ Chat error: \(error)")
-            }
-        }
     }
     
     // MARK: Plan Trip Button
@@ -735,82 +565,47 @@ struct NewTripView: View {
         print("🚀 openTripPlan called for city: \(selectedCity)")
         print("🧭 Params: start=\(startDate) end=\(endDate) travelers=\(adultsCount + childrenCount) budget=\(selectedBudget) interests=\(Array(selectedInterests).sorted())")
 
-        // Geocode city to get coordinates
-        let geocoder = CLGeocoder()
-        geocoder.geocodeAddressString(selectedCity) { placemarks, error in
-            print("📍 Geocoding result: \(placemarks?.count ?? 0) placemarks, error: \(String(describing: error))")
-            let coordinate: CLLocationCoordinate2D
+        // Use default coordinates immediately (no async geocoding delay)
+        let coordinate = Self.defaultCoordinate(for: selectedCity)
+        print("📍 Using coordinate: \(coordinate.latitude), \(coordinate.longitude)")
 
-            if let placemark = placemarks?.first,
-               let location = placemark.location {
-                coordinate = location.coordinate
-            } else {
-                // Default coordinates for common cities
-                coordinate = Self.defaultCoordinate(for: selectedCity)
-            }
+        // Format dates as YYYY-MM-DD
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        let startDateString = dateFormatter.string(from: startDate)
+        let endDateString = dateFormatter.string(from: endDate)
 
-            // Create trip first
-            Task {
-                do {
-                    let apiClient = TripPlanningAPIClient()
+        // Build combined wishes text from all sources
+        let wishesPayload = preferencesDraft.buildWishesPayload()
+        print("📝 Wishes payload:")
+        print("   - Free text: '\(preferencesDraft.freeText)'")
+        print("   - Chat messages: \(preferencesDraft.chatMessages.count)")
+        print("   - Selected tags: \(preferencesDraft.selectedTags)")
+        print("   - Combined payload: '\(wishesPayload)'")
 
-                    // Format dates as YYYY-MM-DD
-                    let dateFormatter = DateFormatter()
-                    dateFormatter.dateFormat = "yyyy-MM-dd"
-                    let startDateString = dateFormatter.string(from: self.startDate)
-                    let endDateString = dateFormatter.string(from: self.endDate)
+        // Build trip request
+        let tripRequest = TripCreateRequestDTO(
+            city: selectedCity,
+            startDate: startDateString,
+            endDate: endDateString,
+            numTravelers: adultsCount + childrenCount,
+            pace: "medium",
+            budget: mapBudgetToAPI(selectedBudget),
+            interests: Array(selectedInterests).sorted(),
+            dailyRoutine: nil,
+            hotelLocation: nil,
+            additionalPreferences: wishesPayload.isEmpty ? nil : ["wishes": wishesPayload]
+        )
 
-                    // Build trip request
-                    let tripRequest = TripCreateRequestDTO(
-                        city: self.selectedCity,
-                        startDate: startDateString,
-                        endDate: endDateString,
-                        numTravelers: self.adultsCount + self.childrenCount,
-                        pace: "medium",
-                        budget: self.mapBudgetToAPI(self.selectedBudget),
-                        interests: Array(self.selectedInterests).sorted(),
-                        dailyRoutine: nil,
-                        hotelLocation: nil,
-                        additionalPreferences: nil
-                    )
+        // Show RouteBuildingView IMMEDIATELY with tripRequest
+        // Trip creation will happen inside RouteBuildingViewModel
+        self.routeBuildingData = RouteBuildingData(
+            tripRequest: tripRequest,
+            cityName: selectedCity,
+            coordinate: coordinate
+        )
 
-                    // Create trip
-                    let tripResponse = try await apiClient.createTrip(tripRequest)
-
-                    // Parse trip ID
-                    guard let tripId = UUID(uuidString: tripResponse.id) else {
-                        throw APIError.decodingError(NSError(domain: "Invalid trip ID", code: -1))
-                    }
-
-                    await MainActor.run {
-                        print("✅ Trip created successfully, showing route building view")
-                        print("✅ tripId: \(tripId)")
-                        print("✅ coordinate: \(coordinate.latitude), \(coordinate.longitude)")
-
-                        // Save trip ID for chat functionality
-                        self.currentTripId = tripId
-
-                        // Create data object and show cover
-                        self.routeBuildingData = RouteBuildingData(
-                            tripId: tripId,
-                            cityName: self.selectedCity,
-                            coordinate: coordinate
-                        )
-                    }
-                } catch {
-                    print("❌ createTrip failed: \(error)")
-                    if let apiError = error as? APIError {
-                        print("❌ APIError: \(apiError) | \(apiError.errorDescription ?? "no description")")
-                    } else {
-                        print("❌ Error type: \(type(of: error))")
-                    }
-                    await MainActor.run {
-                        self.planGenerationError = "Не удалось создать поездку: \(error.localizedDescription)"
-                        self.showErrorAlert = true
-                    }
-                }
-            }
-        }
+        print("✅ Showing route building view immediately")
     }
 
     private static func defaultCoordinate(for city: String) -> CLLocationCoordinate2D {

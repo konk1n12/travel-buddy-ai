@@ -23,7 +23,8 @@ struct RouteBuildingView: View {
     init(
         cityName: String,
         cityCoordinate: CLLocationCoordinate2D,
-        tripId: UUID,
+        tripId: UUID? = nil,
+        tripRequest: TripCreateRequestDTO? = nil,
         apiClient: TripPlanningAPIClientProtocol = TripPlanningAPIClient(),
         onRouteReady: @escaping (ItineraryResponseDTO) -> Void,
         onRetry: @escaping () -> Void,
@@ -37,6 +38,7 @@ struct RouteBuildingView: View {
 
         _viewModel = StateObject(wrappedValue: RouteBuildingViewModel(
             tripId: tripId,
+            tripRequest: tripRequest,
             cityCoordinate: cityCoordinate,
             apiClient: apiClient
         ))
@@ -45,7 +47,7 @@ struct RouteBuildingView: View {
     var body: some View {
         ZStack {
             // MARK: - Background Color (fallback)
-            Color(UIColor.systemGray4)
+            Color.black
                 .ignoresSafeArea()
 
             // MARK: - Live Map Background

@@ -7,6 +7,20 @@
 
 import SwiftUI
 
+// MARK: - View Extension for Conditional Modifiers
+
+extension View {
+    /// Apply modifier conditionally
+    @ViewBuilder
+    func `if`<Transform: View>(_ condition: Bool, transform: (Self) -> Transform) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
+    }
+}
+
 // MARK: - Chat Tab View
 
 /// Обёртка для таба "Чат" с собственным состоянием сообщений
@@ -15,11 +29,11 @@ struct ChatTabView: View {
     @StateObject private var viewModel: ChatViewModel
 
     init() {
-        // Placeholder: use a dummy UUID until we have a real trip
-        // In production, this should be passed from the parent view
+        // Demo mode: no tripId means chat works locally without backend
+        // In production, pass real tripId from parent view
         _viewModel = StateObject(wrappedValue: ChatViewModel(
-            tripId: UUID(),
-            initialMessages: [ChatMessage.welcomeMessage]
+            tripId: nil, // nil = demo mode
+            initialMessages: []
         ))
     }
 
@@ -32,10 +46,15 @@ struct ChatTabView: View {
 
 /// Полноэкранный чат с AI‑агентом (открывается из чат-бара или таба "Чат").
 struct ChatView: View {
-    @StateObject var viewModel: ChatViewModel
+    @ObservedObject var viewModel: ChatViewModel
     @State private var messageText: String = ""
     @FocusState private var isTextFieldFocused: Bool
     @Environment(\.dismiss) private var dismiss
+
+    // UI mode: standalone (with header) or embedded (without header)
+    var isEmbedded: Bool = false
+    var onDismiss: (() -> Void)?
+
     private let warmWhite = Color(red: 0.95, green: 0.94, blue: 0.92)
     private let mutedWarmGray = Color(red: 0.70, green: 0.67, blue: 0.63)
     private let glassFill = Color.white.opacity(0.08)
@@ -43,17 +62,23 @@ struct ChatView: View {
     private let inputFill = Color.white.opacity(0.06)
     private let inputBorder = Color.white.opacity(0.12)
 
-    init(viewModel: ChatViewModel) {
-        _viewModel = StateObject(wrappedValue: viewModel)
+    init(viewModel: ChatViewModel, isEmbedded: Bool = false, onDismiss: (() -> Void)? = nil) {
+        self.viewModel = viewModel
+        self.isEmbedded = isEmbedded
+        self.onDismiss = onDismiss
     }
 
     var body: some View {
         ZStack {
-            SmokyBackgroundView()
+            if !isEmbedded {
+                SmokyBackgroundView()
+            }
 
             VStack(spacing: 0) {
-                // Заголовок чата
-                chatHeaderView
+                // Заголовок чата (только в standalone режиме)
+                if !isEmbedded {
+                    chatHeaderView
+                }
 
                 // Область сообщений
                 ScrollViewReader { proxy in
@@ -63,6 +88,12 @@ struct ChatView: View {
                                 ChatBubbleView(message: message)
                                     .id(message.id)
                             }
+
+                            // NEW: Typing indicator
+                            if viewModel.isAssistantTyping {
+                                TypingIndicatorView()
+                                    .id("typing-indicator")
+                            }
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, 8)
@@ -71,19 +102,24 @@ struct ChatView: View {
                     .scrollIndicators(.hidden)
                     .scrollDismissesKeyboard(.interactively)
                     .onChange(of: viewModel.messages.count) { _ in
-                        if let lastMessage = viewModel.messages.last {
-                            withAnimation {
-                                proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                            }
-                        }
+                        scrollToBottom(proxy: proxy)
+                    }
+                    .onChange(of: viewModel.isAssistantTyping) { _ in
+                        scrollToBottom(proxy: proxy)
                     }
                 }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
-                if viewModel.lastSendFailed {
-                    retryBanner
+                // NEW: Suggestion chips (shown before first user message)
+                if viewModel.showSuggestions {
+                    SuggestionChipsView(chips: SuggestionChip.defaults) { chip in
+                        Task {
+                            await viewModel.sendMessage(chip.fullMessage)
+                        }
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
                 chatInputView
@@ -102,44 +138,13 @@ struct ChatView: View {
                 .ignoresSafeArea(edges: .bottom)
             )
         }
-        .navigationBarHidden(true)
-        .hideTabBar()
-    }
-
-    // MARK: Retry Banner
-
-    private var retryBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Color.travelBuddyOrange.opacity(0.9))
-
-            Text("chat.messageFailed".localized)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(warmWhite)
-
-            Spacer()
-
-            Button(action: { retrySend() }) {
-                Text("common.button.retry".localized)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Color.travelBuddyOrange)
-            }
-            .buttonStyle(.plain)
+        .navigationBarHidden(!isEmbedded)
+        .if(!isEmbedded) { view in
+            view.hideTabBar()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(glassFill)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(glassBorder, lineWidth: 1)
-        )
     }
 
-    // MARK: Chat Header
+    // MARK: - Chat Header
 
     private var chatHeaderView: some View {
         HStack {
@@ -250,11 +255,17 @@ struct ChatView: View {
         }
     }
 
-    // MARK: Retry Send
+    // MARK: - Helper Methods
 
-    private func retrySend() {
-        Task {
-            await viewModel.retrySendMessage()
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        if viewModel.isAssistantTyping {
+            withAnimation {
+                proxy.scrollTo("typing-indicator", anchor: .bottom)
+            }
+        } else if let lastMessage = viewModel.messages.last {
+            withAnimation {
+                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+            }
         }
     }
 }
