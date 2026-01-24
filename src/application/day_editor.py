@@ -179,16 +179,66 @@ class DayEditor:
             return self._parse_itinerary_day(day_data)
 
         # 6. Apply changes and rebuild
+        # CRITICAL FIX (2026-01-20): Track explicitly removed POIs to exclude from rebuild
+        explicitly_removed_poi_ids: Set[UUID] = set()
+
         if len(deterministic_changes) > 0:
+            # Collect removed POI IDs BEFORE applying changes
+            for change in deterministic_changes:
+                if change.type == ChangeType.REMOVE_PLACE:
+                    place_id_str = change.data.get("place_id")
+                    if place_id_str:
+                        try:
+                            explicitly_removed_poi_ids.add(UUID(place_id_str))
+                        except (ValueError, TypeError):
+                            pass
+
+                # CRITICAL FIX (2026-01-24): Also exclude from_place_id when replacing
+                # When user replaces a place, they don't want to see it again in rebuilds
+                elif change.type == ChangeType.REPLACE_PLACE:
+                    from_place_id_str = change.data.get("from_place_id")
+                    if from_place_id_str:
+                        try:
+                            explicitly_removed_poi_ids.add(UUID(from_place_id_str))
+                            print(f"📝 Excluding replaced POI {from_place_id_str} from rebuild")
+                        except (ValueError, TypeError):
+                            pass
+
+            if explicitly_removed_poi_ids:
+                print(f"📝 Tracking {len(explicitly_removed_poi_ids)} explicitly removed/replaced POIs to exclude from rebuild")
+                logger.info(
+                    f"📝 Tracking {len(explicitly_removed_poi_ids)} explicitly removed POIs "
+                    f"to exclude from rebuild"
+                )
+
             # Apply deterministic POI changes first
             day_data = await self._apply_deterministic_changes(
                 day_data, deterministic_changes, day_context, trip_id, db
             )
 
+            # CRITICAL FIX (2026-01-20): Check if day became empty/sparse after removals
+            blocks_after_changes = day_data.get("blocks", [])
+            poi_count = len([b for b in blocks_after_changes if b.get("poi")])
+
+            MIN_POI_COUNT = 4  # 3 meals + 1 activity
+            if poi_count < MIN_POI_COUNT:
+                logger.warning(
+                    f"⚠️ Day {day_number} has only {poi_count} POIs after deterministic changes. "
+                    f"Triggering rebuild to maintain minimum {MIN_POI_COUNT} POIs."
+                )
+                # Force rebuild even without context_changes
+                # CRITICAL: Pass explicitly removed POIs to prevent them from returning
+                day_data = await self._rebuild_day_with_context(
+                    trip_id, day_number, day_context, day_data, db,
+                    explicitly_removed_poi_ids=explicitly_removed_poi_ids
+                )
+
         if len(context_changes) > 0:
             # Rebuild day with new context
+            # CRITICAL: Pass explicitly removed POIs to prevent them from returning
             day_data = await self._rebuild_day_with_context(
-                trip_id, day_number, day_context, day_data, db
+                trip_id, day_number, day_context, day_data, db,
+                explicitly_removed_poi_ids=explicitly_removed_poi_ids
             )
 
         # 7. Optimize route with travel times
@@ -314,19 +364,31 @@ class DayEditor:
 
             elif change.type == ChangeType.REPLACE_PLACE:
                 from_place_id = change.data.get("from_place_id")
-                to_place_id = change.data.get("to_place_id")
+                to_place_id = change.data.get("to_place_id")  # Optional: if None, auto-select
 
-                if from_place_id and to_place_id:
+                if from_place_id:
                     # Find block to replace
                     from_place_id_str = str(from_place_id)
                     for block in blocks:
                         poi = block.get("poi")
                         if poi and str(poi.get("poi_id", "")) == from_place_id_str:
-                            # Fetch new POI details
-                            new_poi = await self._fetch_poi_details(to_place_id, trip_id, db)
-                            if new_poi:
-                                block["poi"] = new_poi.model_dump()
-                                logger.info(f"Replaced place {from_place_id} with {to_place_id}")
+                            # If to_place_id is provided, use it (legacy behavior)
+                            if to_place_id:
+                                new_poi = await self._fetch_poi_details(to_place_id, trip_id, db)
+                                if new_poi:
+                                    block["poi"] = new_poi.model_dump()
+                                    logger.info(f"✅ Replaced place {from_place_id} with {to_place_id} (manual selection)")
+                            else:
+                                # NEW: Auto-select best replacement (mark-for-replacement UX)
+                                logger.info(f"🔄 Auto-selecting replacement for {from_place_id}")
+                                replacement = await self._find_best_replacement_auto(
+                                    poi, day_data, trip_id, db
+                                )
+                                if replacement:
+                                    block["poi"] = replacement.model_dump()
+                                    logger.info(f"✅ Auto-replaced {from_place_id} with {replacement.name} (score-based)")
+                                else:
+                                    logger.warning(f"⚠️ No suitable replacement found for {from_place_id}")
                             break
 
             elif change.type == ChangeType.ADD_PLACE:
@@ -449,11 +511,16 @@ class DayEditor:
         context: DayContext,
         current_day_data: dict,
         db: AsyncSession,
+        explicitly_removed_poi_ids: Optional[Set[UUID]] = None,
     ) -> dict:
         """
         Rebuild day from scratch with new context (preset, wishes, settings).
 
         Uses macro planner + POI planner to regenerate the day structure.
+
+        Args:
+            explicitly_removed_poi_ids: POI IDs that user explicitly removed.
+                These will be excluded from the rebuild to respect user's choice.
         """
         logger.info(f"Rebuilding day {day_number} with context: preset={context.preset}, wishes={len(context.wishes)}")
 
@@ -473,9 +540,24 @@ class DayEditor:
             trip_spec, day_number, context, additional_context, db
         )
 
+        # CRITICAL FIX (2026-01-20): Fetch trip-level used POIs for deduplication
+        trip_used_poi_ids, trip_used_poi_names = await self._get_trip_used_pois(
+            trip_id, db, exclude_day=day_number
+        )
+
+        # CRITICAL: Add explicitly removed POIs to exclusion list
+        # This prevents removed places from returning after rebuild
+        if explicitly_removed_poi_ids:
+            trip_used_poi_ids = trip_used_poi_ids | explicitly_removed_poi_ids
+            logger.info(
+                f"   + {len(explicitly_removed_poi_ids)} explicitly removed POIs "
+                f"(total exclusions: {len(trip_used_poi_ids)})"
+            )
+
         # Generate POI candidates for the day
         day_blocks = await self._generate_day_pois(
-            trip_id, day_number, day_skeleton, preference_profile, db
+            trip_id, day_number, day_skeleton, preference_profile, db,
+            exclude_poi_ids=trip_used_poi_ids
         )
 
         # Convert to day data format
@@ -545,12 +627,23 @@ class DayEditor:
         # This is a simplified version - ideally we'd call macro_planner with day-specific context
         blocks = []
 
-        # Morning activity
+        # Breakfast (CRITICAL FIX 2026-01-24: Add breakfast block for morning starts)
+        if start_hour < 10:  # Day starts in morning
+            blocks.append(SkeletonBlock(
+                block_type=BlockType.MEAL,
+                start_time=dt_time(start_hour, start_minute),
+                end_time=dt_time(min(start_hour + 1, 10), 0),
+                theme="breakfast"
+            ))
+
+        # Morning activity (after breakfast or from start if late morning)
         if start_hour < 12:
+            # If we had breakfast, start activity after it; otherwise from start_time
+            activity_start_hour = start_hour + 1 if start_hour < 10 else start_hour
             blocks.append(SkeletonBlock(
                 block_type=BlockType.ACTIVITY,
-                start_time=dt_time(start_hour, start_minute),
-                end_time=dt_time(start_hour + 2, 0),
+                start_time=dt_time(activity_start_hour, 0),
+                end_time=dt_time(12, 0),
                 theme="morning exploration"
             ))
 
@@ -572,12 +665,15 @@ class DayEditor:
                 theme="afternoon activities"
             ))
 
-        # Dinner
-        if end_hour >= 19:
+        # Dinner (CRITICAL FIX 2026-01-24: Make less restrictive - include if day extends past early afternoon)
+        if end_hour >= 17:  # Changed from >= 19 to include early evening days
+            # If day ends before 19:00, schedule dinner earlier
+            dinner_start = 19 if end_hour >= 19 else max(17, end_hour - 2)
+            dinner_end = min(dinner_start + 1, end_hour)
             blocks.append(SkeletonBlock(
                 block_type=BlockType.MEAL,
-                start_time=dt_time(19, 0),
-                end_time=dt_time(20, 0),
+                start_time=dt_time(dinner_start, 0),
+                end_time=dt_time(dinner_end, end_minute if dinner_end == end_hour else 0),
                 theme="dinner"
             ))
 
@@ -597,6 +693,73 @@ class DayEditor:
             blocks=blocks
         )
 
+    async def _get_trip_used_pois(
+        self,
+        trip_id: UUID,
+        db: AsyncSession,
+        exclude_day: Optional[int] = None
+    ) -> tuple[Set[UUID], Set[str]]:
+        """
+        Fetch all POI IDs and names used in trip (excluding specified day).
+
+        CRITICAL FIX (2026-01-20): Enables trip-level POI deduplication.
+        Returns POIs from ALL days except the one being edited.
+
+        Args:
+            trip_id: Trip UUID
+            db: Database session
+            exclude_day: Day number to exclude (typically the day being edited)
+
+        Returns:
+            Tuple of (set of poi_ids, set of poi_names) for trip-level deduplication
+        """
+        from src.infrastructure.models import ItineraryModel
+
+        # Get itinerary
+        itinerary_result = await db.execute(
+            select(ItineraryModel).where(ItineraryModel.trip_id == trip_id)
+        )
+        itinerary_model = itinerary_result.scalar_one_or_none()
+
+        if not itinerary_model or not itinerary_model.days:
+            return set(), set()
+
+        poi_ids = set()
+        poi_names = set()
+
+        days_data = itinerary_model.days if isinstance(itinerary_model.days, list) else itinerary_model.days.get("days", [])
+
+        for day_data in days_data:
+            day_num = day_data.get("day_number")
+
+            # Skip the day being edited
+            if exclude_day is not None and day_num == exclude_day:
+                continue
+
+            blocks = day_data.get("blocks", [])
+            for block in blocks:
+                poi = block.get("poi")
+                if poi:
+                    # Extract POI ID
+                    poi_id = poi.get("poi_id")
+                    if poi_id:
+                        try:
+                            poi_ids.add(UUID(str(poi_id)))
+                        except (ValueError, TypeError):
+                            pass
+
+                    # Extract POI name
+                    poi_name = poi.get("name")
+                    if poi_name:
+                        poi_names.add(poi_name.lower().strip())
+
+        logger.info(
+            f"Trip-level POI deduplication: Found {len(poi_ids)} unique POI IDs "
+            f"from other days (excluding day {exclude_day})"
+        )
+
+        return poi_ids, poi_names
+
     async def _generate_day_pois(
         self,
         trip_id: UUID,
@@ -604,8 +767,16 @@ class DayEditor:
         day_skeleton: DaySkeleton,
         preference_profile: POIPreferenceProfile,
         db: AsyncSession,
+        exclude_poi_ids: Optional[Set[UUID]] = None,
     ) -> List[dict]:
-        """Generate POI candidates for day blocks."""
+        """
+        Generate POI candidates for day blocks.
+
+        Args:
+            exclude_poi_ids: POI IDs to exclude (from other days + explicitly removed)
+        """
+        if exclude_poi_ids is None:
+            exclude_poi_ids = set()
         # Get trip spec
         trip_spec = await self.trip_spec_collector.get_trip(trip_id, db)
 
@@ -636,8 +807,10 @@ class DayEditor:
                 limit=10
             )
 
-            # Filter out already used POIs
-            available = [c for c in candidates if c.poi_id not in used_poi_ids]
+            # Filter out already used POIs (within this day + from other days + explicitly removed)
+            available = [c for c in candidates
+                        if c.poi_id not in used_poi_ids
+                        and c.poi_id not in exclude_poi_ids]
 
             if available:
                 # Select best candidate
@@ -655,6 +828,19 @@ class DayEditor:
                     "travel_distance_meters": 0,
                 }
                 day_blocks.append(block_data)
+            else:
+                # CRITICAL FIX (2026-01-24): Log when blocks are dropped due to no available POIs
+                print(
+                    f"⚠️ No POI available for {skeleton_block.block_type.value} block "
+                    f"at {skeleton_block.start_time.strftime('%H:%M')} (theme: {skeleton_block.theme}). "
+                    f"Found {len(candidates)} candidates but all were filtered out "
+                    f"(used: {len(used_poi_ids)}, excluded: {len(exclude_poi_ids)})"
+                )
+                logger.warning(
+                    f"⚠️ No POI available for {skeleton_block.block_type.value} block "
+                    f"at {skeleton_block.start_time.strftime('%H:%M')} (theme: {skeleton_block.theme}). "
+                    f"All {len(candidates)} candidates were filtered out."
+                )
 
         return day_blocks
 
@@ -751,3 +937,150 @@ class DayEditor:
             theme=day_data.get("theme", ""),
             blocks=blocks
         )
+
+    async def _find_best_replacement_auto(
+        self,
+        current_poi: dict,
+        day_data: dict,
+        trip_id: UUID,
+        db: AsyncSession
+    ) -> Optional[POICandidate]:
+        """
+        Automatically find best replacement for a POI using scoring algorithm.
+
+        NEW FEATURE (2026-01-24): Mark-for-replacement UX.
+        Instead of user selecting replacement, backend auto-selects best alternative.
+
+        Scoring formula (same as PlaceReplacementService):
+        - 60% proximity (closer to original location = better)
+        - 30% rating (higher rating = better)
+        - 10% popularity (more reviews = better)
+
+        Args:
+            current_poi: The POI being replaced (dict with category, lat, lon)
+            day_data: Current day data (to collect used POI IDs)
+            trip_id: Trip UUID
+            db: Database session
+
+        Returns:
+            Best replacement POI candidate, or None if no suitable replacement found
+        """
+        import math
+
+        # Extract current POI data
+        current_category = current_poi.get("category", "restaurant")
+        current_lat = current_poi.get("lat")
+        current_lon = current_poi.get("lon")
+        current_name = current_poi.get("name", "")
+
+        if not current_lat or not current_lon:
+            logger.warning(f"Cannot find replacement for {current_name}: missing coordinates")
+            return None
+
+        # Get trip city
+        trip_result = await db.execute(select(TripModel).where(TripModel.id == trip_id))
+        trip = trip_result.scalar_one_or_none()
+        if not trip:
+            logger.error(f"Trip {trip_id} not found")
+            return None
+
+        # Collect all used POI IDs in this day (to exclude from candidates)
+        used_poi_ids = set()
+        for block in day_data.get("blocks", []):
+            poi = block.get("poi")
+            if poi:
+                poi_id = poi.get("poi_id")
+                if poi_id:
+                    try:
+                        used_poi_ids.add(UUID(str(poi_id)))
+                    except (ValueError, TypeError):
+                        pass
+
+        # Search for POI candidates in the same category
+        poi_provider = get_poi_provider(db)
+
+        # Determine desired categories based on current category
+        if current_category in ["restaurant", "cafe", "food"]:
+            desired_categories = ["restaurant", "cafe", "food"]
+        elif current_category in ["bar", "nightclub", "night_club"]:
+            desired_categories = ["bar", "nightclub", "night_club"]
+        else:
+            desired_categories = ["tourist_attraction", "museum", "art_gallery", "park", "monument"]
+
+        logger.info(f"🔍 Searching for replacement in categories: {desired_categories}")
+
+        candidates = await poi_provider.search_pois(
+            city=trip.city,
+            desired_categories=desired_categories,
+            limit=50  # Get more candidates for better scoring
+        )
+
+        logger.info(f"📦 Found {len(candidates)} candidates")
+
+        # Filter and score candidates
+        max_distance_m = 3000  # 3km max distance from original location
+        scored_options = []
+
+        for candidate in candidates:
+            # Filter: Skip if already used in this day
+            if candidate.poi_id in used_poi_ids:
+                continue
+
+            # Filter: Skip if it's the same place
+            if candidate.name.lower().strip() == current_name.lower().strip():
+                continue
+
+            # Filter: Must have coordinates
+            if not candidate.lat or not candidate.lon:
+                continue
+
+            # Calculate distance using Haversine formula
+            lat1, lon1 = math.radians(current_lat), math.radians(current_lon)
+            lat2, lon2 = math.radians(candidate.lat), math.radians(candidate.lon)
+
+            dlat = lat2 - lat1
+            dlon = lon2 - lon1
+
+            a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+            c = 2 * math.asin(math.sqrt(a))
+            distance_m = 6371000 * c  # Earth radius in meters
+
+            # Filter: Max distance
+            if distance_m > max_distance_m:
+                continue
+
+            # Calculate scores
+            proximity_score = 1.0 - (distance_m / max_distance_m)
+            rating_score = (candidate.rating or 3.0) / 5.0
+            reviews = candidate.user_ratings_total or 50
+            popularity_score = min(1.0, (reviews / 10000) ** 0.5)
+
+            # Weighted total (60% proximity, 30% rating, 10% popularity)
+            total_score = (
+                0.6 * proximity_score +
+                0.3 * rating_score +
+                0.1 * popularity_score
+            )
+
+            scored_options.append({
+                "candidate": candidate,
+                "score": total_score,
+                "distance_m": int(distance_m),
+            })
+
+        if not scored_options:
+            logger.warning(f"⚠️ No suitable replacements found for {current_name}")
+            return None
+
+        # Sort by score descending
+        scored_options.sort(key=lambda x: x["score"], reverse=True)
+
+        # Return best option
+        best = scored_options[0]
+        logger.info(
+            f"✅ Best replacement: {best['candidate'].name} "
+            f"(score: {best['score']:.3f}, distance: {best['distance_m']}m, "
+            f"rating: {best['candidate'].rating})"
+        )
+
+        return best["candidate"]

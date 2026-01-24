@@ -95,7 +95,7 @@ enum PendingChangeType: Equatable, Hashable {
     case updateSettings
     case setPreset(DayPreset?)
     case addPlace(placeId: String, placement: PlacePlacement)
-    case replacePlace(fromPlaceId: String, toPlaceId: String)
+    case replacePlace(placeId: String)  // NEW (2026-01-24): Mark for replacement (backend auto-selects)
     case removePlace(placeId: String)
     case addWishMessage(text: String)
 }
@@ -231,8 +231,8 @@ final class AIStudioViewModel: ObservableObject {
     @Published var searchQuery: String = ""
     @Published var searchResults: [StudioSearchResult] = []
     @Published var isSearching: Bool = false
-    @Published var replacementAlternatives: [String: [StudioSearchResult]] = [:]
-    @Published var expandedReplacementPlaceId: String?
+    // Places marked for replacement (will show orange UI)
+    @Published var markedForReplacement: Set<String> = []
 
     // Pending changes
     @Published var pendingChanges: [PendingChange] = []
@@ -418,37 +418,30 @@ final class AIStudioViewModel: ObservableObject {
         searchResults = []
     }
 
-    func toggleReplacement(for placeId: String) {
-        if expandedReplacementPlaceId == placeId {
-            expandedReplacementPlaceId = nil
-        } else {
-            expandedReplacementPlaceId = placeId
-            Task {
-                await loadReplacementAlternatives(for: placeId)
+    // NEW (2026-01-24): Mark place for replacement (backend will auto-select)
+    func toggleMarkForReplacement(_ placeId: String) {
+        if markedForReplacement.contains(placeId) {
+            // Unmark
+            markedForReplacement.remove(placeId)
+            // Remove pending change if exists
+            pendingChanges.removeAll { change in
+                if case .replacePlace(let id) = change.type, id == placeId {
+                    return true
+                }
+                return false
             }
+            print("📝 Unmarked place for replacement: \(placeId). Total pending: \(pendingChanges.count)")
+        } else {
+            // Mark for replacement
+            markedForReplacement.insert(placeId)
+            pendingChanges.append(PendingChange(type: .replacePlace(placeId: placeId)))
+            print("📝 Marked place for replacement: \(placeId). Total pending: \(pendingChanges.count)")
         }
-    }
-
-    func replacePlace(from originalId: String, to newId: String) {
-        pendingChanges.append(PendingChange(type: .replacePlace(fromPlaceId: originalId, toPlaceId: newId)))
-        print("📝 Replace place: \(originalId) -> \(newId). Total pending: \(pendingChanges.count)")
-        expandedReplacementPlaceId = nil
     }
 
     func removePlace(_ placeId: String) {
         pendingChanges.append(PendingChange(type: .removePlace(placeId: placeId)))
         print("📝 Remove place: \(placeId). Total pending: \(pendingChanges.count)")
-    }
-
-    private func loadReplacementAlternatives(for placeId: String) async {
-        guard let place = serverState.places.first(where: { $0.id == placeId }) else { return }
-
-        do {
-            let alternatives = try await performPlaceSearch(query: place.category)
-            replacementAlternatives[placeId] = alternatives.filter { $0.id != placeId }
-        } catch {
-            replacementAlternatives[placeId] = []
-        }
     }
 
     // MARK: - Apply / Reset
@@ -496,8 +489,7 @@ final class AIStudioViewModel: ObservableObject {
         syncLocalStateFromServer()
         searchQuery = ""
         searchResults = []
-        expandedReplacementPlaceId = nil
-        replacementAlternatives = [:]
+        markedForReplacement.removeAll()
     }
 
     // MARK: - Pending Change Helpers
@@ -513,20 +505,11 @@ final class AIStudioViewModel: ObservableObject {
 
     func isPlacePendingReplacement(_ placeId: String) -> Bool {
         pendingChanges.contains { change in
-            if case .replacePlace(let fromId, _) = change.type {
-                return fromId == placeId
+            if case .replacePlace(let id) = change.type {
+                return id == placeId
             }
             return false
         }
-    }
-
-    func pendingReplacementTarget(for placeId: String) -> String? {
-        for change in pendingChanges {
-            if case .replacePlace(let fromId, let toId) = change.type, fromId == placeId {
-                return toId
-            }
-        }
-        return nil
     }
 
     // MARK: - API Calls
@@ -606,10 +589,11 @@ final class AIStudioViewModel: ObservableObject {
                     data: .addPlace(placeId: placeId, placement: placementDTO)
                 ))
 
-            case .replacePlace(let fromId, let toId):
+            case .replacePlace(let placeId):
+                // NEW (2026-01-24): Mark for replacement - backend auto-selects best alternative
                 changes.append(DayChangeDTO(
                     type: "replace_place",
-                    data: .replacePlace(from: fromId, to: toId)
+                    data: .replacePlace(from: placeId, to: nil)  // toId = nil triggers auto-selection
                 ))
 
             case .removePlace(let placeId):

@@ -651,19 +651,99 @@ class GooglePlacesPOIProvider(POIProvider):
             logger.error(f"Unexpected error fetching from Google Places: {e}")
             return []
 
+    def _validate_city_match(self, place: GooglePlaceResult, requested_city: str) -> bool:
+        """
+        Validate that a Google Place result actually belongs to the requested city.
+
+        CRITICAL FIX (2026-01-19): Prevents cross-city POI contamination.
+        Checks the formatted_address to ensure the place is in the correct city.
+        Handles different language variations (e.g., "Paris" vs "Париж").
+
+        Args:
+            place: Google Place result with formatted_address
+            requested_city: The city name requested by user
+
+        Returns:
+            True if place is in the requested city, False otherwise
+        """
+        if not place.formatted_address:
+            logger.warning(f"Place {place.name} has no formatted_address, skipping")
+            return False
+
+        def normalize_city(city_name: str) -> str:
+            """Normalize city name for comparison."""
+            normalized = city_name.lower().strip()
+            # Remove common country names
+            for suffix in [", russia", ", france", ", usa", ", uk", ", united states",
+                          ", united kingdom", ", russian federation", ", italy",
+                          ", spain", ", germany", ", netherlands"]:
+                if normalized.endswith(suffix):
+                    normalized = normalized[:-len(suffix)].strip()
+            return normalized
+
+        requested_normalized = normalize_city(requested_city)
+        address_normalized = normalize_city(place.formatted_address)
+
+        # Map city name variations (handles multilingual)
+        city_name_map = {
+            "paris": ["paris", "париж"],
+            "париж": ["paris", "париж"],
+            "moscow": ["moscow", "москва"],
+            "москва": ["moscow", "москва"],
+            "saint petersburg": ["saint petersburg", "санкт-петербург", "st petersburg", "st. petersburg"],
+            "санкт-петербург": ["saint petersburg", "санкт-петербург", "st petersburg", "st. petersburg"],
+            "london": ["london", "лондон"],
+            "лондон": ["london", "лондон"],
+            "new york": ["new york", "нью-йорк"],
+            "нью-йорк": ["new york", "нью-йорк"],
+            "rome": ["rome", "рим", "roma"],
+            "рим": ["rome", "рим", "roma"],
+            "madrid": ["madrid", "мадрид"],
+            "мадрид": ["madrid", "мадрид"],
+            "barcelona": ["barcelona", "барселона"],
+            "барселона": ["barcelona", "барселона"],
+            "berlin": ["berlin", "берлин"],
+            "берлин": ["berlin", "берлин"],
+            "amsterdam": ["amsterdam", "амстердам"],
+            "амстердам": ["amsterdam", "амстердам"],
+        }
+
+        # Get all possible variations
+        possible_names = city_name_map.get(requested_normalized, [requested_normalized])
+
+        # Check if any variation appears in address
+        for variant in possible_names:
+            if variant in address_normalized:
+                return True
+
+        # City not found in address - reject this POI
+        logger.warning(
+            f"Place {place.name} address '{place.formatted_address}' "
+            f"does not contain city '{requested_city}'"
+        )
+        return False
+
     async def _cache_place_to_db(
         self,
         place: GooglePlaceResult,
         city: str,
         desired_categories: list[str],
         fetch_details: bool = True,
-    ) -> POIModel:
+    ) -> Optional[POIModel]:
         """
         Cache a Google Place result to the database.
         Optionally fetches full details before caching.
+
+        Returns:
+            POIModel if cached successfully, None if city validation failed
         """
         from sqlalchemy.exc import IntegrityError
         from src.infrastructure.google_place_details import fetch_place_details
+
+        # CRITICAL: Validate that place is actually in the requested city (2026-01-19 fix)
+        if not self._validate_city_match(place, city):
+            logger.warning(f"Skipping place {place.name} - not in city {city}")
+            return None
 
         # Check if already exists
         result = await self.db.execute(
@@ -847,6 +927,11 @@ class GooglePlacesPOIProvider(POIProvider):
                 desired_categories,
                 fetch_details=fetch_details,
             )
+
+            # Skip if city validation failed (2026-01-19 fix)
+            if poi_model is None:
+                continue
+
             score = self._calculate_relevance_score(place, desired_categories, budget)
 
             candidate = POICandidate(
@@ -914,21 +999,49 @@ class CompositePOIProvider(POIProvider):
         fetch_details: bool = True,
     ) -> list[POICandidate]:
         """
-        Search POIs using composite strategy with radius and block type filtering.
+        Search POIs using 50/50 composite strategy.
 
-        Strategy:
-        1. Query internal DB first (with filtering)
-        2. If results < limit and external provider available, fetch more from Google
-        3. External results are automatically cached to DB
+        NEW STRATEGY (2026-01-24):
+        1. ALWAYS split limit 50/50 between DB and Google Maps
+        2. Query internal DB for 50% of POIs
+        3. Query Google Maps API for 50% of POIs (if available)
         4. Merge and deduplicate results
         5. Return top `limit` candidates sorted by rank_score
+
+        This ensures fresh data from Google Maps in every search.
         """
-        # Query internal DB first
+        # Calculate 50/50 split
+        db_limit = limit // 2  # e.g., 10 -> 5
+        google_limit = limit - db_limit  # e.g., 10 -> 5 (or 11 -> 6 for odd numbers)
+
+        print(f"🔍 POI Search Strategy: {db_limit} from DB + {google_limit} from Google Maps (total: {limit})")
+        logger.info(f"🔍 POI Search Strategy: {db_limit} from DB + {google_limit} from Google Maps (total: {limit})")
+
+        # If no external provider, get all from DB
+        if not self.external_provider:
+            logger.warning("No external provider configured, using DB-only results")
+            db_results = await self.db_provider.search_pois(
+                city=city,
+                desired_categories=desired_categories,
+                budget=budget,
+                limit=limit,  # Get full limit from DB
+                center_location=center_location,
+                city_center_lat=city_center_lat,
+                city_center_lon=city_center_lon,
+                max_radius_km=max_radius_km,
+                block_type=block_type,
+                search_keywords=search_keywords,
+                fetch_details=fetch_details,
+            )
+            logger.debug(f"DB (fallback) returned {len(db_results)} POIs for {city}")
+            return db_results[:limit]
+
+        # Query DB for 50% of POIs
         db_results = await self.db_provider.search_pois(
             city=city,
             desired_categories=desired_categories,
             budget=budget,
-            limit=limit,
+            limit=db_limit,  # Only 50%
             center_location=center_location,
             city_center_lat=city_center_lat,
             city_center_lon=city_center_lon,
@@ -938,21 +1051,16 @@ class CompositePOIProvider(POIProvider):
             fetch_details=fetch_details,
         )
 
-        logger.debug(f"DB returned {len(db_results)} POIs for {city}")
+        print(f"📦 DB returned {len(db_results)}/{db_limit} POIs for {city}")
+        logger.info(f"📦 DB returned {len(db_results)}/{db_limit} POIs for {city}")
 
-        # If we have enough results or no external provider, return DB results
-        if len(db_results) >= limit or not self.external_provider:
-            return db_results[:limit]
-
-        # Fetch from external API to supplement
-        remaining_needed = limit - len(db_results)
-
+        # ALWAYS query Google Maps for the other 50%
         try:
             external_results = await self.external_provider.search_pois(
                 city=city,
                 desired_categories=desired_categories,
                 budget=budget,
-                limit=remaining_needed + 5,  # Fetch a few extra for deduplication
+                limit=google_limit + 5,  # Fetch a few extra for deduplication
                 center_location=center_location,
                 city_center_lat=city_center_lat,
                 city_center_lon=city_center_lon,
@@ -961,9 +1069,27 @@ class CompositePOIProvider(POIProvider):
                 search_keywords=search_keywords,
                 fetch_details=fetch_details,
             )
-            logger.debug(f"External API returned {len(external_results)} POIs")
+            print(f"🌐 Google Maps returned {len(external_results)}/{google_limit} POIs")
+            logger.info(f"🌐 Google Maps returned {len(external_results)}/{google_limit} POIs")
         except Exception as e:
             logger.warning(f"External POI provider failed, using DB-only results: {e}")
+            # Fallback: get more from DB to compensate
+            if len(db_results) < limit:
+                additional_needed = limit - len(db_results)
+                additional_db_results = await self.db_provider.search_pois(
+                    city=city,
+                    desired_categories=desired_categories,
+                    budget=budget,
+                    limit=db_limit + additional_needed,
+                    center_location=center_location,
+                    city_center_lat=city_center_lat,
+                    city_center_lon=city_center_lon,
+                    max_radius_km=max_radius_km,
+                    block_type=block_type,
+                    search_keywords=search_keywords,
+                    fetch_details=fetch_details,
+                )
+                return additional_db_results[:limit]
             return db_results[:limit]
 
         # Merge results and deduplicate by POI ID
@@ -974,6 +1100,9 @@ class CompositePOIProvider(POIProvider):
             if candidate.poi_id not in seen_ids:
                 merged_results.append(candidate)
                 seen_ids.add(candidate.poi_id)
+
+        print(f"✅ Merged: {len(merged_results)} total POIs (after deduplication)")
+        logger.info(f"✅ Merged: {len(merged_results)} total POIs (after deduplication)")
 
         # Sort by rank_score and limit
         merged_results.sort(key=lambda c: c.rank_score, reverse=True)

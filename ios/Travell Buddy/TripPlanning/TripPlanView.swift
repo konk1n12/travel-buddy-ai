@@ -42,7 +42,7 @@ struct TripPlanView: View {
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundColor(.white.opacity(0.8))
                             heroSection(plan: plan)
-                            tabSwitcher
+                            tabSwitcher(plan: plan)
                             summaryStatsRow(summary: plan.summary)
                             tabContent(plan: plan)
                         }
@@ -329,7 +329,7 @@ struct TripPlanView: View {
         .frame(height: heroHeight)
     }
 
-    private var tabSwitcher: some View {
+    private func tabSwitcher(plan: TripPlan) -> some View {
         HStack(spacing: 6) {
             segmentButton(title: "Обзор", isSelected: viewModel.selectedTab == .overview, isLocked: false) {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -341,7 +341,7 @@ struct TripPlanView: View {
                     viewModel.selectedTab = .route
                 }
             }
-            segmentButton(title: "Карта", isSelected: viewModel.selectedTab == .map, isLocked: gatingManager.isMapLocked()) {
+            segmentButton(title: "Карта", isSelected: viewModel.selectedTab == .map, isLocked: gatingManager.isMapLocked(serverIsLocked: plan.isLocked)) {
                 gatingManager.requireAuth(for: .viewMap) {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         viewModel.selectedTab = .map
@@ -391,7 +391,7 @@ struct TripPlanView: View {
         VStack(spacing: 14) {
             daySelector(plan: plan)
 
-            if gatingManager.isMapLocked() {
+            if gatingManager.isMapLocked(serverIsLocked: plan.isLocked) {
                 LockedMapView {
                     gatingManager.requireAuth(for: .viewMap) {
                         // Map will be shown after auth success
@@ -478,7 +478,8 @@ struct TripPlanView: View {
                 return nil
             }
             // Day 1 (dayNumber == 1) is always unlocked, Days 2+ require auth for guests
-            let isLocked = gatingManager.isDayLocked(dayIndex: dayNumber - 1)
+            // Respect server's is_locked flag (FREEMIUM_ENABLED setting)
+            let isLocked = gatingManager.isDayLocked(dayIndex: dayNumber - 1, serverIsLocked: plan.isLocked)
             return DayTabItem(id: dayNumber, date: date, isLocked: isLocked)
         }
 
@@ -1141,19 +1142,20 @@ extension TripPlanView {
                 },
                 onTapReplace: {
                     handleReplaceTap(for: activity, stopIndex: stopIndex)
+                },
+                onCancelReplace: {
+                    print("🚫 Cancel replace for activity: \(activity.title)")
+                    replaceManager.cancel()
                 }
             )
         }
     }
 
     private func handleReplaceTap(for activity: TripActivity, stopIndex: Int) {
-        // If already finding for this activity, cancel it
-        if replaceManager.isActivityFinding(activity.id) {
-            replaceManager.cancel()
-            return
-        }
+        print("🔄 Replace tap for activity: \(activity.title)")
+        print("📍 Current state: \(replaceManager.state)")
 
-        // Start the replace flow
+        // Start the replace flow (manager handles duplicates internally)
         replaceManager.startReplace(
             for: activity,
             dayIndex: viewModel.selectedDayIndex,

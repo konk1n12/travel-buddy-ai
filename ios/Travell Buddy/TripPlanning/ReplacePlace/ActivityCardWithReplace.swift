@@ -15,6 +15,7 @@ struct ActivityCardWithReplace: View {
     let showReplacedBadge: Bool
     let onTapCard: () -> Void
     let onTapReplace: () -> Void
+    let onCancelReplace: (() -> Void)?
 
     @State private var showMenu: Bool = false
 
@@ -29,7 +30,8 @@ struct ActivityCardWithReplace: View {
         isFinding: Bool,
         showReplacedBadge: Bool,
         onTapCard: @escaping () -> Void,
-        onTapReplace: @escaping () -> Void
+        onTapReplace: @escaping () -> Void,
+        onCancelReplace: (() -> Void)? = nil
     ) {
         self.activity = activity
         self.dayIndex = dayIndex
@@ -38,6 +40,7 @@ struct ActivityCardWithReplace: View {
         self.showReplacedBadge = showReplacedBadge
         self.onTapCard = onTapCard
         self.onTapReplace = onTapReplace
+        self.onCancelReplace = onCancelReplace
 
         self.showsThumbnail = activity.category == .museum || activity.category == .viewpoint || activity.category == .walk
         self.isMustSee = activity.note?.localizedCaseInsensitiveContains("must") == true || activity.category == .museum
@@ -169,23 +172,25 @@ struct ActivityCardWithReplace: View {
             }
 
             // Cancel button
-            VStack {
-                HStack {
-                    Spacer()
-                    Button(action: onTapReplace) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.white.opacity(0.7))
-                            .frame(width: 26, height: 26)
-                            .background(
-                                Circle()
-                                    .fill(Color.white.opacity(0.15))
-                            )
+            if let onCancelReplace = onCancelReplace {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button(action: onCancelReplace) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.white.opacity(0.7))
+                                .frame(width: 26, height: 26)
+                                .background(
+                                    Circle()
+                                        .fill(Color.white.opacity(0.15))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .padding(10)
                     }
-                    .buttonStyle(.plain)
-                    .padding(10)
+                    Spacer()
                 }
-                Spacer()
             }
         }
     }

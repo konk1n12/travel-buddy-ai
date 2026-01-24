@@ -428,14 +428,9 @@ struct AIStudioView: View {
                         PlaceReplaceCard(
                             place: place,
                             isPendingRemoval: viewModel.isPlacePendingRemoval(place.id),
-                            isPendingReplacement: viewModel.isPlacePendingReplacement(place.id),
-                            isExpanded: viewModel.expandedReplacementPlaceId == place.id,
-                            alternatives: viewModel.replacementAlternatives[place.id] ?? [],
-                            onToggleExpand: {
-                                viewModel.toggleReplacement(for: place.id)
-                            },
-                            onReplace: { newId in
-                                viewModel.replacePlace(from: place.id, to: newId)
+                            isMarkedForReplacement: viewModel.markedForReplacement.contains(place.id),
+                            onToggleMark: {
+                                viewModel.toggleMarkForReplacement(place.id)
                             },
                             onRemove: {
                                 viewModel.removePlace(place.id)
@@ -786,112 +781,77 @@ struct PlacementOptionButton: View {
 struct PlaceReplaceCard: View {
     let place: StudioPlace
     let isPendingRemoval: Bool
-    let isPendingReplacement: Bool
-    let isExpanded: Bool
-    let alternatives: [StudioSearchResult]
-    let onToggleExpand: () -> Void
-    let onReplace: (String) -> Void
+    let isMarkedForReplacement: Bool
+    let onToggleMark: () -> Void
     let onRemove: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(place.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(isPendingRemoval ? .white.opacity(0.4) : .white)
-                        .strikethrough(isPendingRemoval)
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(place.name)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(isPendingRemoval ? .white.opacity(0.4) : .white)
+                    .strikethrough(isPendingRemoval)
 
-                    Text("\(place.timeStart)–\(place.timeEnd)")
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.5))
-                }
-
-                Spacer()
-
-                if isPendingReplacement {
-                    Text("Замена")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.orange)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.orange.opacity(0.2)))
-                } else if isPendingRemoval {
-                    Text("Удалено")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.red.opacity(0.8))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.red.opacity(0.2)))
-                } else {
-                    HStack(spacing: 8) {
-                        Button(action: onToggleExpand) {
-                            Text("Заменить")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.orange)
-                        }
-
-                        Button(action: onRemove) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.5))
-                        }
-                    }
-                }
+                Text("\(place.timeStart)–\(place.timeEnd)")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.5))
             }
 
-            // Alternatives
-            if isExpanded && !alternatives.isEmpty {
-                VStack(spacing: 8) {
-                    ForEach(alternatives.prefix(3)) { alt in
-                        Button {
-                            onReplace(alt.id)
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(alt.name)
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundColor(.white)
-                                    if let address = alt.address {
-                                        Text(address)
-                                            .font(.system(size: 11))
-                                            .foregroundColor(.white.opacity(0.5))
-                                            .lineLimit(1)
-                                    }
-                                }
-                                Spacer()
-                                if let rating = alt.rating {
-                                    HStack(spacing: 2) {
-                                        Image(systemName: "star.fill")
-                                            .font(.system(size: 9))
-                                            .foregroundColor(.orange)
-                                        Text(String(format: "%.1f", rating))
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundColor(.white.opacity(0.7))
-                                    }
-                                }
-                            }
-                            .padding(10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(Color.orange.opacity(0.1))
-                            )
-                        }
-                        .buttonStyle(.plain)
+            Spacer()
+
+            if isMarkedForReplacement {
+                // Show "Marked" badge with option to unmark
+                Button(action: onToggleMark) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.orange)
+                        Text("Отмечено")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.orange)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.orange.opacity(0.2)))
+                }
+                .buttonStyle(.plain)
+            } else if isPendingRemoval {
+                Text("Удалено")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.red.opacity(0.8))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.red.opacity(0.2)))
+            } else {
+                HStack(spacing: 8) {
+                    Button(action: onToggleMark) {
+                        Text("Заменить")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.orange)
+                    }
+
+                    Button(action: onRemove) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.5))
                     }
                 }
-                .padding(.top, 4)
             }
         }
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.05))
+                // NEW (2026-01-24): Orange background when marked for replacement
+                .fill(
+                    isMarkedForReplacement ? Color.orange.opacity(0.15) :
+                    Color.white.opacity(0.05)
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .stroke(
                             isPendingRemoval ? Color.red.opacity(0.3) :
-                            isPendingReplacement ? Color.orange.opacity(0.3) :
+                            isMarkedForReplacement ? Color.orange.opacity(0.5) :
                             Color.clear,
                             lineWidth: 1.5
                         )

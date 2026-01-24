@@ -2,103 +2,146 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Never hallucinate or fabricate information. If you're unsure about anything, you MUST explicitly state your uncertainty. Say "I don't know" rather than guessing or making assumptions.
-
 ## Project Overview
 
-AI-powered trip planning backend (FastAPI + PostgreSQL). Takes user inputs via chat or form, generates optimized multi-day itineraries with POI selection and route optimization.
+**Travel Buddy AI** is an AI-powered trip planning system:
+- **Backend:** FastAPI + PostgreSQL with LLM integration (io.net or Anthropic)
+- **iOS App:** SwiftUI native client (iOS 16+)
+- **Features:** Multi-day itineraries, POI selection, route optimization, freemium gating
 
-Does NOT include: Live Guide, TTS/audio, Server-Driven UI, or frontend/mobile code (iOS app is in `ios/` but is a separate concern).
+Core flow: `User Input → Backend API → LLM Processing → POI Selection → Route Optimization → iOS Display`
 
 ## Essential Commands
 
+### Backend
+
 ```bash
-# Development
-make install              # Install Python dependencies
-make dev                  # Run API locally (uvicorn with reload)
 make up                   # Start Docker containers (API + PostgreSQL)
-make down                 # Stop Docker containers
+make down                 # Stop containers
 make logs                 # View Docker logs
+make dev                  # Run API locally with hot reload
 
-# Database
-make db-upgrade           # Apply migrations
-make db-downgrade         # Rollback last migration
-make db-migrate msg="..."  # Generate new Alembic migration
-make seed-pois            # Seed database with example POIs
-
-# Testing
-make test                 # Run all tests with coverage
+make db-upgrade           # Apply database migrations
+make db-migrate msg="..." # Generate new migration
+make test                 # Run all tests
 pytest tests/test_foo.py  # Run single test file
-pytest tests/test_foo.py::test_bar -v  # Run single test function
+pytest tests/test_foo.py::test_bar -v  # Run specific test
 
-# External service checks (manual, not in pytest)
-make check-externals      # Check all external APIs
-make check-llm            # Check LLM (io.net or Anthropic)
-make check-google-places  # Check Google Places API
-make check-google-routes  # Check Google Routes API
+make check-externals      # Check all external API connections
+docker compose down -v    # Fresh database (removes volumes)
 ```
 
-## Tech Stack
+### iOS
 
-- Python 3.11+, FastAPI, Pydantic v2
-- SQLAlchemy 2.0 async + asyncpg + PostgreSQL
-- Alembic for migrations
-- LLM: io.net (default) or Anthropic Claude (configurable via `LLM_PROVIDER`)
-- pytest-asyncio with auto mode
+```bash
+open "ios/Travell Buddy.xcodeproj"  # Open in Xcode, then ⌘R to run
+```
 
 ## Architecture
 
-Four layers in `src/`:
-
-1. **api/** - FastAPI routers (HTTP endpoints)
-2. **application/** - Business logic orchestrators
-3. **domain/** - Core models (Pydantic schemas in `schemas.py`, DB models in `models.py`)
-4. **infrastructure/** - Database, LLM client, external APIs (Google Places/Routes)
-
-### Planning Pipeline Flow
+### Backend Layers (Clean Architecture)
 
 ```
-TripSpec → MacroPlanner → DaySkeleton → POIPlanner → RouteOptimizer → Itinerary → TripCritic
+src/
+├── api/           # HTTP endpoints (FastAPI routers)
+├── application/   # Business logic orchestration
+├── domain/        # Core models (Pydantic schemas)
+├── infrastructure/# External integrations (LLM, Google APIs, DB)
+├── auth/          # JWT, providers, auth service
+└── i18n/          # Localization middleware
 ```
 
-Key components in `src/application/`:
-- **trip_spec.py** - Collects/validates user inputs
-- **trip_chat.py** - Natural language → TripSpec updates via LLM
-- **macro_planner.py** - LLM-based high-level day structure
-- **poi_planner.py** - POI candidate selection (deterministic + optional LLM ranking)
-- **poi_selection_llm.py** - LLM-based POI re-ranking (when `USE_LLM_FOR_POI_SELECTION=true`)
-- **route_optimizer.py** - Travel time optimization, opening hours compliance
-- **district_planner.py** - Geographic clustering for walking-efficient routes
-- **trip_critic.py** - Validation (missing meals, closed POIs, long days)
+**Trip Planning Pipeline** (`src/application/trip_planner.py`):
+1. **MacroPlanner** - LLM generates day structure (time blocks, themes)
+2. **POIPlanner** - Selects actual places from Google Places
+3. **RouteOptimizer** - Orders POIs for efficient walking routes
+4. **TripCritic** - Validates and reports issues
 
-### Infrastructure Layer
+**Key Application Components:**
+- `trip_planner.py` - Main orchestrator
+- `route_optimizer.py` / `smart_route_optimizer.py` - Travel optimization
+- `district_planner.py` - Geographic clustering by neighborhoods
+- `day_editor.py` - AI Studio day editing
+- `place_replacement_service.py` - Replace POI alternatives
 
-- **llm_client.py** - Provider-agnostic LLM (Anthropic/OpenAI-compatible)
-- **poi_providers.py** - Google Places integration with caching
-- **travel_time.py** - Simple heuristic or Google Routes API
-- **geocoding.py** - Address → coordinates
+### iOS Architecture (MVVM)
 
-## Key Environment Variables
+```
+ios/Travell Buddy/
+├── TripPlanning/      # Trip views and view models
+├── Chat/              # Chat interface
+├── Services/          # AuthManager, AuthGatingManager, SavedTripsManager
+├── Networking/        # API clients and DTOs
+├── Features/          # PlaceDetails, RouteBuilding, TripSummary
+└── Views/             # Reusable UI components
+```
 
-Copy `.env.example` to `.env`. Critical settings:
+**Key View Models:**
+- `TripPlanViewModel` - Trip display and interaction state
+- `ChatViewModel` - Trip planning chat
+- `EditDayViewModel` - Day editing (AI Studio)
+
+**Singletons:**
+- `AuthManager.shared` - Authentication state
+- `AuthGatingManager.shared` - Freemium gating (`isDayLocked`, `isMapLocked`)
+
+**API Clients:**
+- `TripPlanningAPIClient` - Unauthenticated calls
+- `AuthenticatedAPIClient` - Requires JWT token
+
+## Configuration
+
+Copy `.env.example` to `.env` and set:
 
 ```bash
-LLM_PROVIDER=ionet                    # or "anthropic"
-IONET_API_KEY=...                     # Required for io.net
-GOOGLE_MAPS_API_KEY=...               # Required for POI search and routes
-DATABASE_URL=postgresql+asyncpg://... # DB connection
-TRAVEL_TIME_PROVIDER=google_maps      # or "simple" (heuristic)
-USE_LLM_FOR_POI_SELECTION=true        # Enable LLM POI ranking
-ENABLE_SMART_ROUTING=true             # Geographic clustering
-FREEMIUM_ENABLED=false                # Auth gating (set true in prod)
+# Required
+IONET_API_KEY=...           # or ANTHROPIC_API_KEY
+GOOGLE_MAPS_API_KEY=...
+
+# Key settings
+LLM_PROVIDER=ionet          # "ionet" or "anthropic"
+FREEMIUM_ENABLED=false      # true in production
+ENABLE_SMART_ROUTING=true   # Geographic clustering
+ENABLE_AGENTIC_PLANNING=true # LLM personalization
 ```
 
-## Key Domain Models
+Database runs on port **5433** (mapped from container's 5432).
 
-Defined in `src/domain/schemas.py`:
-- `TripSpec` - User's trip configuration (city, dates, travelers, pace, interests)
-- `DailyRoutine` - Wake/sleep times, meal windows
-- `DaySkeleton` / `SkeletonBlock` - High-level day structure from macro planner
-- `POICandidate` - Place candidates with ranking scores
-- `ItineraryDay` / `ItineraryBlock` - Final detailed schedule
-- `CritiqueIssue` - Validation problems per day/block
+## API Documentation
+
+When running: http://localhost:8000/docs (Swagger) or http://localhost:8000/redoc
+
+Key endpoints:
+- `POST /api/trips` - Create trip
+- `POST /api/trips/{id}/plan` - Generate itinerary
+- `GET /api/trips/{id}/itinerary` - Get full itinerary
+- `POST /api/trips/{id}/chat` - Natural language planning
+- `POST /api/day-studio/{trip_id}/days/{day_index}/...` - AI Studio editing
+
+## Testing
+
+pytest-asyncio is configured in **auto mode** - async tests are detected automatically.
+
+```bash
+make test                              # All tests
+pytest tests/test_trips.py -v          # Specific file
+pytest -k "test_macro" -v              # Pattern match
+pytest --tb=short                      # Shorter tracebacks
+```
+
+## Key Files Reference
+
+**Backend:**
+- `src/application/trip_planner.py` - Main planning orchestrator
+- `src/api/trips.py` - Trip CRUD endpoints
+- `src/api/day_studio.py` - AI Studio endpoints
+- `src/infrastructure/llm_client.py` - LLM provider abstraction
+- `src/config.py` - All configuration settings
+
+**iOS:**
+- `TripPlanning/TripPlanView.swift` - Main trip view
+- `TripPlanning/TripPlanViewModel.swift` - Trip state management
+- `Services/AuthManager.swift` - Auth state
+- `Services/AuthGatingManager.swift` - Freemium logic
+- `Networking/TripPlanningAPIClient.swift` - API calls
+- `Config/AppConfig.swift` - Base URL and app config

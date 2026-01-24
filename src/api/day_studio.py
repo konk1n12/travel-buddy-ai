@@ -116,9 +116,10 @@ class DayChangeDataDTO(BaseModel):
     place_id: Optional[str] = None
     placement: Optional[PlacementDTO] = None
 
-    # ReplacePlace
-    from_place_id: Optional[str] = None
-    to_place_id: Optional[str] = None
+    # ReplacePlace (mark-for-replacement UX)
+    # place_id: The place that should be replaced (backend will find best alternative)
+    from_place_id: Optional[str] = None  # Legacy field for compatibility
+    to_place_id: Optional[str] = None     # Deprecated: backend now auto-selects replacement
 
     # AddWishMessage
     text: Optional[str] = None
@@ -573,12 +574,21 @@ async def search_places(
     from src.infrastructure.poi_providers import get_poi_provider
 
     try:
-        provider = get_poi_provider()
+        provider = get_poi_provider(db)  # ✅ FIX: Added db parameter
+
+        # ✅ FIX: Use broad categories + search keywords instead of query parameter
+        broad_categories = [
+            "tourist_attraction", "museum", "art_gallery", "park",
+            "restaurant", "cafe", "bar", "nightclub",
+            "shopping_mall", "store", "monument"
+        ]
+        search_keywords = [request.query] if request.query else None
 
         # Search using the provider
         candidates = await provider.search_pois(
             city=request.city,
-            query=request.query,
+            desired_categories=broad_categories,
+            search_keywords=search_keywords,
             limit=request.limit or 10
         )
 

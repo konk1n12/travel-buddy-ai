@@ -190,7 +190,7 @@ struct DayChangeDataDTO: Codable {
         )
     }
 
-    static func replacePlace(from: String, to: String) -> DayChangeDataDTO {
+    static func replacePlace(from: String, to: String?) -> DayChangeDataDTO {
         DayChangeDataDTO(
             tempo: nil, startTime: nil, endTime: nil, budget: nil,
             preset: nil, placeId: nil, placement: nil, fromPlaceId: from, toPlaceId: to, text: nil

@@ -102,6 +102,12 @@ final class ReplacePlaceManager: ObservableObject {
 
     /// Start the replace flow for an activity
     func startReplace(for activity: TripActivity, dayIndex: Int, stopIndex: Int) {
+        // ✅ Protection against duplicate calls
+        if findingTask != nil && !(findingTask?.isCancelled ?? true) {
+            print("⚠️ Replace flow already in progress, ignoring duplicate call")
+            return
+        }
+
         // Cancel any existing flow
         cancelCurrentFlow()
 

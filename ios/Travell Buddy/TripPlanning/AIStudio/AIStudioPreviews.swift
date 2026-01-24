@@ -211,7 +211,7 @@ enum AIStudioPreviewData {
         AIStudioView(
             viewModel: .makePreview(
                 pendingChanges: [
-                    PendingChange(type: .replacePlace(fromPlaceId: "place_1", toPlaceId: "alt_1"))
+                    PendingChange(type: .replacePlace(placeId: "place_1"))
                 ]
             )
         )
@@ -297,29 +297,20 @@ enum AIStudioPreviewData {
     PlaceReplaceCard(
         place: AIStudioPreviewData.mockPlaces[0],
         isPendingRemoval: false,
-        isPendingReplacement: false,
-        isExpanded: false,
-        alternatives: [],
-        onToggleExpand: {},
-        onReplace: { _ in },
+        isMarkedForReplacement: false,
+        onToggleMark: {},
         onRemove: {}
     )
     .padding()
     .background(Color(red: 0.10, green: 0.08, blue: 0.06))
 }
 
-#Preview("Component: Place Card (Expanded)") {
+#Preview("Component: Place Card (Marked for Replacement)") {
     PlaceReplaceCard(
         place: AIStudioPreviewData.mockPlaces[0],
         isPendingRemoval: false,
-        isPendingReplacement: false,
-        isExpanded: true,
-        alternatives: [
-            StudioSearchResult(id: "alt_1", name: "Les Deux Magots", category: "cafe", rating: 4.2, address: "6 Place Saint-Germain", photoURL: nil),
-            StudioSearchResult(id: "alt_2", name: "Café de la Paix", category: "cafe", rating: 4.4, address: "5 Place de l'Opéra", photoURL: nil)
-        ],
-        onToggleExpand: {},
-        onReplace: { _ in },
+        isMarkedForReplacement: true,
+        onToggleMark: {},
         onRemove: {}
     )
     .padding()
@@ -330,28 +321,12 @@ enum AIStudioPreviewData {
     PlaceReplaceCard(
         place: AIStudioPreviewData.mockPlaces[0],
         isPendingRemoval: true,
-        isPendingReplacement: false,
-        isExpanded: false,
-        alternatives: [],
-        onToggleExpand: {},
-        onReplace: { _ in },
+        isMarkedForReplacement: false,
+        onToggleMark: {},
         onRemove: {}
     )
     .padding()
     .background(Color(red: 0.10, green: 0.08, blue: 0.06))
 }
 
-#Preview("Component: Place Card (Pending Replace)") {
-    PlaceReplaceCard(
-        place: AIStudioPreviewData.mockPlaces[0],
-        isPendingRemoval: false,
-        isPendingReplacement: true,
-        isExpanded: false,
-        alternatives: [],
-        onToggleExpand: {},
-        onReplace: { _ in },
-        onRemove: {}
-    )
-    .padding()
-    .background(Color(red: 0.10, green: 0.08, blue: 0.06))
-}
+// Preview removed - functionality changed to mark-for-replacement (see "Marked for Replacement" preview above)
