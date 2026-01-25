@@ -33,6 +33,7 @@ enum ReplacePlaceState: Equatable {
     case finding(activityId: UUID)
     case selecting(activityId: UUID, options: [ReplacementOption])
     case applying(activityId: UUID, selected: ReplacementOption)
+    case error(activityId: UUID, message: String)
 
     static func == (lhs: ReplacePlaceState, rhs: ReplacePlaceState) -> Bool {
         switch (lhs, rhs) {
@@ -44,6 +45,8 @@ enum ReplacePlaceState: Equatable {
             return lhsId == rhsId
         case (.applying(let lhsId, _), .applying(let rhsId, _)):
             return lhsId == rhsId
+        case (.error(let lhsId, _), .error(let rhsId, _)):
+            return lhsId == rhsId
         default:
             return false
         }
@@ -53,7 +56,7 @@ enum ReplacePlaceState: Equatable {
         switch self {
         case .idle:
             return nil
-        case .finding(let id), .selecting(let id, _), .applying(let id, _):
+        case .finding(let id), .selecting(let id, _), .applying(let id, _), .error(let id, _):
             return id
         }
     }
@@ -70,6 +73,7 @@ enum ReplacePlaceState: Equatable {
 final class ReplacePlaceManager: ObservableObject {
     @Published private(set) var state: ReplacePlaceState = .idle
     @Published private(set) var recentlyReplacedActivityId: UUID?
+    @Published var errorMessage: String?
 
     private var findingTask: Task<Void, Never>?
     private var badgeDismissTask: Task<Void, Never>?
@@ -101,10 +105,15 @@ final class ReplacePlaceManager: ObservableObject {
     }
 
     /// Start the replace flow for an activity
-    func startReplace(for activity: TripActivity, dayIndex: Int, stopIndex: Int) {
-        // ✅ Protection against duplicate calls
-        if findingTask != nil && !(findingTask?.isCancelled ?? true) {
-            print("⚠️ Replace flow already in progress, ignoring duplicate call")
+    func startReplace(
+        for activity: TripActivity,
+        tripId: String,
+        dayIndex: Int,
+        stopIndex: Int
+    ) {
+        // ✅ Protection against duplicate calls - check state instead of task
+        guard case .idle = state else {
+            print("⚠️ Replace flow already in progress (state: \(state)), ignoring duplicate call")
             return
         }
 
@@ -114,27 +123,126 @@ final class ReplacePlaceManager: ObservableObject {
         // Transition to finding state
         state = .finding(activityId: activity.id)
 
-        // Start async task to generate mock options
+        // Start async task to fetch real replacement options
         findingTask = Task {
-            // Simulate network delay (0.6-1.0s)
-            try? await Task.sleep(nanoseconds: UInt64.random(in: 600_000_000...1_000_000_000))
+            defer {
+                // ✅ CRITICAL FIX: Clear task when done to allow next replacement
+                self.findingTask = nil
+                print("🧹 Cleared findingTask")
+            }
 
-            guard !Task.isCancelled else { return }
+            do {
+                // Show shimmer for at least 0.6s for better UX
+                try await Task.sleep(nanoseconds: 600_000_000)
 
-            // Generate mock replacement options (always 5)
-            let options = MockReplacementGenerator.generateAlternatives(
-                for: activity,
-                count: 5
-            )
+                guard !Task.isCancelled else {
+                    print("🚫 Finding task cancelled")
+                    await MainActor.run { self.state = .idle }
+                    return
+                }
 
-            // Transition to selecting state
-            state = .selecting(activityId: activity.id, options: options)
+                // Build API request
+                let request = ReplacementOptionsRequestDTO(
+                    dayIndex: dayIndex,
+                    blockIndex: stopIndex,
+                    placeId: activity.poiId ?? "",
+                    category: Self.mapCategoryToBackend(activity.category),
+                    lat: activity.latitude ?? 0,
+                    lng: activity.longitude ?? 0,
+                    constraints: ReplacementConstraintsDTO(
+                        maxDistanceM: 3000,
+                        sameCategory: true,
+                        excludeExistingInDay: true,
+                        excludePlaceIds: []  // TODO: collect from day in ViewModel
+                    ),
+                    limit: 5
+                )
+
+                // Call API
+                let apiClient = TripPlanningAPIClient.shared
+                let response = try await apiClient.getReplacementOptions(
+                    tripId: tripId,
+                    request: request
+                )
+
+                guard !Task.isCancelled else {
+                    print("🚫 Finding task cancelled after API call")
+                    await MainActor.run { self.state = .idle }
+                    return
+                }
+
+                // Convert DTOs to ReplacementOption
+                let options = response.options.map { dto in
+                    ReplacementOption(
+                        id: UUID(),
+                        title: dto.name,
+                        subtitle: dto.area ?? "",
+                        category: Self.mapCategoryFromBackend(dto.category),
+                        rating: dto.rating,
+                        distance: Self.formatDistance(dto.distanceM),
+                        tags: dto.tags,
+                        address: dto.address,
+                        poiId: dto.placeId,
+                        latitude: dto.lat,
+                        longitude: dto.lng
+                    )
+                }
+
+                // Check if we got any options
+                if options.isEmpty {
+                    print("⚠️ No replacement options found")
+                    await MainActor.run {
+                        self.errorMessage = "Альтернативы не найдены. Попробуйте позже."
+                        self.state = .error(activityId: activity.id, message: self.errorMessage!)
+                    }
+                } else {
+                    // Transition to selecting state
+                    print("✅ Got \(options.count) replacement options, transitioning to selecting state")
+                    await MainActor.run {
+                        self.state = .selecting(activityId: activity.id, options: options)
+                    }
+                }
+
+            } catch {
+                print("❌ Error fetching replacement options: \(error)")
+
+                // Determine error message based on error type
+                let message: String
+                if let apiError = error as? APIError {
+                    switch apiError {
+                    case .networkError:
+                        message = "Не удалось загрузить альтернативы. Проверьте подключение к интернету."
+                    case .httpError(let statusCode, _):
+                        if statusCode == 409 {
+                            message = "День изменился. Обновите страницу."
+                        } else {
+                            message = "Ошибка сервера. Попробуйте позже."
+                        }
+                    case .decodingError:
+                        message = "Ошибка обработки данных."
+                    default:
+                        message = "Не удалось загрузить альтернативы."
+                    }
+                } else {
+                    message = "Не удалось загрузить альтернативы."
+                }
+
+                await MainActor.run {
+                    self.errorMessage = message
+                    self.state = .error(activityId: activity.id, message: message)
+                }
+            }
         }
     }
 
     /// User selected a replacement option
     func selectOption(_ option: ReplacementOption, onReplace: @escaping (UUID, ReplacementOption) -> Void) {
-        guard case .selecting(let activityId, _) = state else { return }
+        guard case .selecting(let activityId, _) = state else {
+            print("⚠️ Cannot select option - not in selecting state (current: \(state))")
+            return
+        }
+
+        print("👆 User selected replacement option: \(option.title)")
 
         // Transition to applying state
         state = .applying(activityId: activityId, selected: option)
@@ -145,6 +253,7 @@ final class ReplacePlaceManager: ObservableObject {
         // Show "Replaced" badge briefly then reset
         recentlyReplacedActivityId = activityId
         state = .idle
+        print("✅ Transitioned to idle, ready for next replacement")
 
         // Clear badge after 1.5 seconds
         badgeDismissTask?.cancel()
@@ -157,20 +266,74 @@ final class ReplacePlaceManager: ObservableObject {
 
     /// Cancel the current replace flow
     func cancel() {
+        print("🚫 Cancelling replace flow (current state: \(state))")
         cancelCurrentFlow()
         state = .idle
+        print("✅ Reset to idle after cancel")
     }
 
     /// Dismiss the sheet (same as cancel when in selecting state)
     func dismissSheet() {
         if case .selecting = state {
+            print("📋 Dismissing sheet, cancelling flow")
             cancel()
         }
     }
 
     private func cancelCurrentFlow() {
-        findingTask?.cancel()
-        findingTask = nil
+        if findingTask != nil {
+            print("🧹 Cancelling and clearing findingTask")
+            findingTask?.cancel()
+            findingTask = nil
+        }
+    }
+
+    // MARK: - Helper Methods
+
+    /// Map iOS category to backend category string
+    private static func mapCategoryToBackend(_ category: TripActivityCategory) -> String {
+        switch category {
+        case .food:
+            return "restaurant"
+        case .museum:
+            return "museum"
+        case .viewpoint:
+            return "attraction"
+        case .walk:
+            return "park"
+        case .nightlife:
+            return "nightlife"
+        case .other:
+            return "other"
+        }
+    }
+
+    /// Map backend category string to iOS category
+    private static func mapCategoryFromBackend(_ category: String) -> TripActivityCategory {
+        switch category.lowercased() {
+        case "restaurant", "cafe", "food":
+            return .food
+        case "museum":
+            return .museum
+        case "attraction", "viewpoint":
+            return .viewpoint
+        case "park", "walk":
+            return .walk
+        case "nightlife", "bar", "club":
+            return .nightlife
+        default:
+            return .other
+        }
+    }
+
+    /// Format distance in meters to readable string
+    private static func formatDistance(_ meters: Int) -> String {
+        if meters < 1000 {
+            return "\(meters) м"
+        } else {
+            let km = Double(meters) / 1000.0
+            return String(format: "%.1f км", km)
+        }
     }
 }
 

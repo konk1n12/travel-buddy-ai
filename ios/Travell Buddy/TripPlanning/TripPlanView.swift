@@ -141,7 +141,13 @@ struct TripPlanView: View {
                 options: replaceManager.currentOptions,
                 onSelect: { option in
                     replaceManager.selectOption(option) { activityId, selectedOption in
-                        replaceActivity(activityId: activityId, with: selectedOption)
+                        // Apply replacement to backend
+                        Task {
+                            await applyReplacementToBackend(
+                                activityId: activityId,
+                                selectedOption: selectedOption
+                            )
+                        }
                     }
                     replaceSheetActivity = nil
                 },
@@ -170,6 +176,19 @@ struct TripPlanView: View {
                 if let activity = findActivity(by: activityId) {
                     replaceSheetActivity = activity
                 }
+            }
+        }
+        .alert("Ошибка", isPresented: .init(
+            get: { replaceManager.errorMessage != nil },
+            set: { if !$0 { replaceManager.errorMessage = nil; replaceManager.cancel() } }
+        )) {
+            Button("OK") {
+                replaceManager.errorMessage = nil
+                replaceManager.cancel()
+            }
+        } message: {
+            if let errorMessage = replaceManager.errorMessage {
+                Text(errorMessage)
             }
         }
         .onChange(of: isShowingEditDay) { newValue in
@@ -1165,9 +1184,15 @@ extension TripPlanView {
         print("🔄 Replace tap for activity: \(activity.title)")
         print("📍 Current state: \(replaceManager.state)")
 
+        guard let plan = viewModel.plan else {
+            print("⚠️ No trip ID available")
+            return
+        }
+
         // Start the replace flow (manager handles duplicates internally)
         replaceManager.startReplace(
             for: activity,
+            tripId: plan.tripId.uuidString,
             dayIndex: viewModel.selectedDayIndex,
             stopIndex: stopIndex
         )
@@ -1226,6 +1251,54 @@ extension TripPlanView {
         // Update the plan with the replacement (with crossfade animation)
         withAnimation(.easeInOut(duration: 0.3)) {
             viewModel.replaceActivity(at: dayIndex, activityIndex: activityIndex, with: replacement)
+        }
+    }
+
+    /// Apply replacement to backend and update local plan
+    @MainActor
+    private func applyReplacementToBackend(
+        activityId: UUID,
+        selectedOption: ReplacementOption
+    ) async {
+        guard let plan = viewModel.plan,
+              let dayIndex = plan.days.firstIndex(where: { day in
+                  day.activities.contains(where: { $0.id == activityId })
+              }),
+              let blockIndex = plan.days[dayIndex].activities.firstIndex(where: { $0.id == activityId }),
+              let oldPlaceId = plan.days[dayIndex].activities[blockIndex].poiId,
+              let newPlaceId = selectedOption.poiId else {
+            print("⚠️ Missing required data for backend replacement")
+            // Fallback to local-only replacement
+            replaceActivity(activityId: activityId, with: selectedOption)
+            return
+        }
+
+        do {
+            // Call backend API
+            let response = try await viewModel.applyReplacementToBackend(
+                tripId: plan.tripId.uuidString,
+                dayIndex: dayIndex,
+                blockIndex: blockIndex,
+                oldPlaceId: oldPlaceId,
+                newPlaceId: newPlaceId,
+                currentRevision: viewModel.getCurrentRevision(forDay: dayIndex)
+            )
+
+            if response.success {
+                print("✅ Replacement applied successfully on backend")
+                // ViewModel already updated the plan with new travel data
+                // No need to do local replacement again
+            } else {
+                print("⚠️ Backend replacement failed, message: \(response.message ?? "none")")
+                // Fallback to local-only replacement
+                replaceActivity(activityId: activityId, with: selectedOption)
+            }
+
+        } catch {
+            print("❌ Error applying replacement to backend: \(error)")
+            // Show error to user (TODO: add error state)
+            // Fallback to local-only replacement
+            replaceActivity(activityId: activityId, with: selectedOption)
         }
     }
 }

@@ -36,6 +36,9 @@ final class TripPlanViewModel: ObservableObject {
     /// Indicates if the trip has been modified since loading
     @Published var hasUnsavedChanges: Bool = false
 
+    /// Track revision number for each day (for optimistic locking)
+    @Published var dayRevisions: [Int: Int] = [:]
+
     private let apiClient: TripPlanningAPIClient
 
     // Store last generation parameters for retry
@@ -89,6 +92,9 @@ final class TripPlanViewModel: ObservableObject {
         do {
             let itinerary = try await apiClient.getItinerary(tripId: existingPlan.tripId.uuidString.lowercased())
             self.plan = itinerary.toTripPlan(using: existingPlan)
+
+            // Initialize revisions for all days
+            initializeRevisions()
 
             // Mark as having unsaved changes if loaded from saved trip
             if isLoadedFromSavedTrip {
@@ -195,6 +201,9 @@ final class TripPlanViewModel: ObservableObject {
                 expectedEndDate: endDate
             )
 
+            // Initialize revisions for all days
+            initializeRevisions()
+
             print("🎉 Trip plan successfully generated!")
 
         } catch {
@@ -288,6 +297,9 @@ final class TripPlanViewModel: ObservableObject {
 
             // 3. Convert to TripPlan (preserve existing metadata)
             self.plan = fullItinerary.toTripPlan(using: currentPlan)
+
+            // Reinitialize revisions after rebuild
+            initializeRevisions()
 
             lastUpdateResult = .success
             print("🎉 Trip plan successfully updated!")
@@ -392,6 +404,186 @@ final class TripPlanViewModel: ObservableObject {
         self.hasUnsavedChanges = true
 
         print("🔄 Activity replaced at day \(dayIndex), position \(activityIndex): \(newActivity.title)")
+    }
+
+    // MARK: - Backend Place Replacement
+
+    /// Apply place replacement to backend and update local plan with travel data
+    @MainActor
+    func applyReplacementToBackend(
+        tripId: String,
+        dayIndex: Int,
+        blockIndex: Int,
+        oldPlaceId: String,
+        newPlaceId: String,
+        currentRevision: Int
+    ) async throws -> ReplacementAppliedResponseDTO {
+        print("🔄 Applying replacement to backend: trip=\(tripId), day=\(dayIndex), block=\(blockIndex)")
+
+        // Create request
+        let request = ApplyReplacementRequestDTO(
+            dayIndex: dayIndex,
+            blockIndex: blockIndex,
+            oldPlaceId: oldPlaceId,
+            newPlaceId: newPlaceId,
+            idempotencyKey: UUID().uuidString,
+            clientRouteVersion: currentRevision
+        )
+
+        // Call API
+        let apiClient = TripPlanningAPIClient.shared
+        let response = try await apiClient.applyReplacement(
+            tripId: tripId,
+            request: request
+        )
+
+        if response.success {
+            print("✅ Replacement applied on backend, updating local plan with travel data")
+
+            // Update local plan with backend data (including new travel times/distances)
+            updateLocalPlanWithBackendData(
+                dayIndex: dayIndex,
+                blockIndex: blockIndex,
+                updatedBlock: response.updatedBlock
+            )
+
+            // Update revision number for this day
+            updateRevision(forDay: dayIndex, newRevision: response.routeVersion)
+
+            // Mark as saved (changes persisted to backend)
+            hasUnsavedChanges = false
+
+            print("✅ Local plan updated with new travel data")
+        } else {
+            print("⚠️ Replacement response indicated failure")
+        }
+
+        return response
+    }
+
+    /// Update local plan with data from backend apply response
+    private func updateLocalPlanWithBackendData(
+        dayIndex: Int,
+        blockIndex: Int,
+        updatedBlock: [String: AnyCodable]
+    ) {
+        guard var currentPlan = plan,
+              dayIndex >= 0,
+              dayIndex < currentPlan.days.count,
+              blockIndex >= 0,
+              blockIndex < currentPlan.days[dayIndex].activities.count else {
+            print("⚠️ Invalid indices for updating local plan")
+            return
+        }
+
+        // Extract POI data from updatedBlock
+        guard let poiDict = updatedBlock["poi"]?.value as? [String: Any] else {
+            print("⚠️ No POI data in updated block")
+            return
+        }
+
+        // Extract travel data
+        let travelTimeMinutes = updatedBlock["travel_time_from_prev"]?.value as? Int
+        let travelDistanceMeters = updatedBlock["travel_distance_meters"]?.value as? Int
+
+        // Get current activity to preserve some fields
+        let currentActivity = currentPlan.days[dayIndex].activities[blockIndex]
+
+        // Create updated activity with new POI and travel data
+        let updatedActivity = TripActivity(
+            id: currentActivity.id,
+            time: currentActivity.time,
+            endTime: currentActivity.endTime,
+            title: poiDict["name"] as? String ?? currentActivity.title,
+            description: currentActivity.description,
+            category: mapCategoryFromBackend(poiDict["category"] as? String ?? "other"),
+            address: poiDict["location"] as? String ?? currentActivity.address,
+            note: currentActivity.note,
+            latitude: poiDict["lat"] as? Double ?? currentActivity.latitude,
+            longitude: poiDict["lon"] as? Double ?? currentActivity.longitude,
+            travelPolyline: currentActivity.travelPolyline,  // Keep existing polyline for now
+            rating: poiDict["rating"] as? Double,
+            tags: poiDict["tags"] as? [String],
+            poiId: poiDict["poi_id"] as? String,
+            travelTimeMinutes: travelTimeMinutes,
+            travelDistanceMeters: travelDistanceMeters
+        )
+
+        // Update the plan
+        var updatedActivities = currentPlan.days[dayIndex].activities
+        updatedActivities[blockIndex] = updatedActivity
+
+        let updatedDay = TripDay(
+            index: currentPlan.days[dayIndex].index,
+            date: currentPlan.days[dayIndex].date,
+            title: currentPlan.days[dayIndex].title,
+            summary: currentPlan.days[dayIndex].summary,
+            activities: updatedActivities
+        )
+
+        var updatedDays = currentPlan.days
+        updatedDays[dayIndex] = updatedDay
+
+        let updatedPlan = TripPlan(
+            tripId: currentPlan.tripId,
+            destinationCity: currentPlan.destinationCity,
+            startDate: currentPlan.startDate,
+            endDate: currentPlan.endDate,
+            days: updatedDays,
+            travellersCount: currentPlan.travellersCount,
+            comfortLevel: currentPlan.comfortLevel,
+            interestsSummary: currentPlan.interestsSummary,
+            tripSummary: currentPlan.tripSummary,
+            isLocked: currentPlan.isLocked,
+            cityPhotoReference: currentPlan.cityPhotoReference
+        )
+
+        self.plan = updatedPlan
+
+        print("📏 Updated activity with travel: \(travelTimeMinutes ?? 0) min, \(travelDistanceMeters ?? 0) m")
+    }
+
+    /// Map backend category string to iOS category
+    private func mapCategoryFromBackend(_ category: String) -> TripActivityCategory {
+        switch category.lowercased() {
+        case "restaurant", "cafe", "food":
+            return .food
+        case "museum":
+            return .museum
+        case "attraction", "viewpoint":
+            return .viewpoint
+        case "park", "walk":
+            return .walk
+        case "nightlife", "bar", "club":
+            return .nightlife
+        default:
+            return .other
+        }
+    }
+
+    // MARK: - Revision Tracking
+
+    /// Initialize revisions for all days in the plan (start at 1)
+    private func initializeRevisions() {
+        guard let plan = plan else { return }
+
+        dayRevisions.removeAll()
+        for dayIndex in 0..<plan.days.count {
+            dayRevisions[dayIndex] = 1
+        }
+
+        print("📝 Initialized revisions for \(plan.days.count) days")
+    }
+
+    /// Get current revision for a day
+    func getCurrentRevision(forDay dayIndex: Int) -> Int {
+        return dayRevisions[dayIndex] ?? 1
+    }
+
+    /// Update revision after successful backend operation
+    private func updateRevision(forDay dayIndex: Int, newRevision: Int) {
+        dayRevisions[dayIndex] = newRevision
+        print("📝 Updated revision for day \(dayIndex): \(newRevision)")
     }
 
 }

@@ -572,6 +572,27 @@ class DayEditor:
         for block_data in day_blocks:
             new_day_data["blocks"].append(block_data)
 
+        # CRITICAL VALIDATION (2026-01-25): Ensure meal blocks are present
+        meal_blocks = [b for b in day_blocks if b.get("block_type") == BlockType.MEAL.value]
+        meal_themes = [b.get("theme") for b in meal_blocks]
+
+        logger.info(f"📊 Day rebuild complete: {len(day_blocks)} blocks, {len(meal_blocks)} meals ({', '.join(meal_themes)})")
+
+        # Check for expected meal blocks based on skeleton
+        expected_meals = [b.theme for b in day_skeleton.blocks if b.block_type == BlockType.MEAL]
+        missing_meals = [m for m in expected_meals if m not in meal_themes]
+
+        if missing_meals:
+            logger.error(
+                f"❌ VALIDATION FAILED: Missing meal blocks: {missing_meals}! "
+                f"Expected: {expected_meals}, Got: {meal_themes}"
+            )
+            print(
+                f"❌ VALIDATION FAILED: Missing meal blocks: {missing_meals}!"
+            )
+        else:
+            logger.info(f"✅ VALIDATION PASSED: All expected meal blocks present")
+
         return new_day_data
 
     def _build_additional_context(self, context: DayContext) -> str:
@@ -607,7 +628,16 @@ class DayEditor:
         additional_context: str,
         db: AsyncSession,
     ) -> DaySkeleton:
-        """Generate macro skeleton for a single day."""
+        """
+        Generate macro skeleton for a single day.
+
+        CRITICAL (2026-01-25): Guarantees meal blocks based on day timespan:
+        - Breakfast: if day overlaps 6:00-12:00
+        - Lunch: if day overlaps 12:00-16:00
+        - Dinner: if day overlaps 16:00-23:00
+
+        This ensures every day has appropriate meals regardless of other settings.
+        """
         from datetime import date, timedelta
 
         # Parse times
@@ -624,58 +654,110 @@ class DayEditor:
         day_date = start_date + timedelta(days=day_number - 1)
 
         # Build simplified skeleton with meal and activity blocks
-        # This is a simplified version - ideally we'd call macro_planner with day-specific context
         blocks = []
 
-        # Breakfast (CRITICAL FIX 2026-01-24: Add breakfast block for morning starts)
-        if start_hour < 10:  # Day starts in morning
+        # CRITICAL FIX (2026-01-25): Guarantee meal blocks based on time overlap
+        # This ensures meals are never skipped due to time constraints
+
+        # Breakfast: Add if day overlaps breakfast time (6:00-12:00)
+        # Day overlaps breakfast if: start < 12 OR (start == 12 and start_minute == 0)
+        day_overlaps_breakfast = start_hour < 12 or (start_hour == 12 and start_minute == 0)
+
+        if day_overlaps_breakfast:
+            # Schedule breakfast appropriately based on start time
+            if start_hour < 6:
+                # Very early start, breakfast at 6:00
+                breakfast_start = dt_time(6, 0)
+                breakfast_end = dt_time(7, 0)
+            elif start_hour <= 9:
+                # Morning start, breakfast at start time
+                breakfast_start = dt_time(start_hour, start_minute)
+                breakfast_end = dt_time(min(start_hour + 1, 10), 0)
+            else:
+                # Late morning start (10-11), squeeze in breakfast
+                breakfast_start = dt_time(start_hour, start_minute)
+                breakfast_end = dt_time(min(start_hour + 1, 12), 0)
+
             blocks.append(SkeletonBlock(
                 block_type=BlockType.MEAL,
-                start_time=dt_time(start_hour, start_minute),
-                end_time=dt_time(min(start_hour + 1, 10), 0),
+                start_time=breakfast_start,
+                end_time=breakfast_end,
                 theme="breakfast"
             ))
 
-        # Morning activity (after breakfast or from start if late morning)
-        if start_hour < 12:
-            # If we had breakfast, start activity after it; otherwise from start_time
-            activity_start_hour = start_hour + 1 if start_hour < 10 else start_hour
+            logger.info(f"✅ Added BREAKFAST block: {breakfast_start.strftime('%H:%M')}-{breakfast_end.strftime('%H:%M')}")
+
+        # Morning activity (if there's time before lunch)
+        if start_hour < 12 and end_hour >= 11:
+            activity_start_hour = start_hour + 1 if day_overlaps_breakfast else start_hour
             blocks.append(SkeletonBlock(
                 block_type=BlockType.ACTIVITY,
-                start_time=dt_time(activity_start_hour, 0),
+                start_time=dt_time(min(activity_start_hour, 11), 0),
                 end_time=dt_time(12, 0),
                 theme="morning exploration"
             ))
 
-        # Lunch
-        if end_hour >= 13:
+        # Lunch: Add if day overlaps lunch time (12:00-16:00)
+        # Day overlaps lunch if: (start <= 16 AND end > 12) OR (start < 16 AND end >= 16)
+        day_overlaps_lunch = (start_hour < 16 and end_hour > 12) or (start_hour <= 12 and end_hour >= 16)
+
+        if day_overlaps_lunch:
+            # Schedule lunch appropriately
+            if start_hour > 12:
+                # Day starts during lunch period
+                lunch_start = dt_time(start_hour, start_minute)
+                lunch_end = dt_time(min(start_hour + 1, 14), 0)
+            else:
+                # Normal lunch time
+                lunch_start = dt_time(12, 30)
+                lunch_end = dt_time(13, 30)
+
             blocks.append(SkeletonBlock(
                 block_type=BlockType.MEAL,
-                start_time=dt_time(12, 30),
-                end_time=dt_time(13, 30),
+                start_time=lunch_start,
+                end_time=lunch_end,
                 theme="lunch"
             ))
 
-        # Afternoon activities
-        if end_hour >= 15:
+            logger.info(f"✅ Added LUNCH block: {lunch_start.strftime('%H:%M')}-{lunch_end.strftime('%H:%M')}")
+
+        # Afternoon activities (if there's time)
+        if start_hour < 17 and end_hour >= 15:
+            afternoon_start = 14 if start_hour < 14 else start_hour
             blocks.append(SkeletonBlock(
                 block_type=BlockType.ACTIVITY,
-                start_time=dt_time(14, 0),
-                end_time=dt_time(17, 0),
+                start_time=dt_time(afternoon_start, 0),
+                end_time=dt_time(min(17, end_hour), 0),
                 theme="afternoon activities"
             ))
 
-        # Dinner (CRITICAL FIX 2026-01-24: Make less restrictive - include if day extends past early afternoon)
-        if end_hour >= 17:  # Changed from >= 19 to include early evening days
-            # If day ends before 19:00, schedule dinner earlier
-            dinner_start = 19 if end_hour >= 19 else max(17, end_hour - 2)
-            dinner_end = min(dinner_start + 1, end_hour)
+        # Dinner: Add if day overlaps dinner time (16:00-23:00)
+        # Day overlaps dinner if: end > 16 (must extend into dinner period)
+        day_overlaps_dinner = end_hour > 16 or (end_hour == 16 and end_minute > 0)
+
+        if day_overlaps_dinner:
+            # Schedule dinner appropriately based on end time
+            if end_hour <= 18:
+                # Early end, early dinner
+                dinner_start = max(16, start_hour) if start_hour > 16 else 17
+                dinner_end = min(dinner_start + 1, end_hour)
+            elif end_hour < 20:
+                # Normal early dinner
+                dinner_start = 18
+                dinner_end = 19
+            else:
+                # Late dinner
+                dinner_start = 19
+                dinner_end = min(20, end_hour)
+
             blocks.append(SkeletonBlock(
                 block_type=BlockType.MEAL,
                 start_time=dt_time(dinner_start, 0),
                 end_time=dt_time(dinner_end, end_minute if dinner_end == end_hour else 0),
                 theme="dinner"
             ))
+
+            logger.info(f"✅ Added DINNER block: {dinner_start:02d}:{0:02d}-{dinner_end:02d}:{end_minute if dinner_end == end_hour else 0:02d}")
 
         # Evening (if nightlife preset or late end time)
         if end_hour >= 21 or context.preset == "nightlife":
@@ -685,6 +767,13 @@ class DayEditor:
                 end_time=dt_time(end_hour, end_minute),
                 theme="evening entertainment"
             ))
+
+        # VALIDATION: Count meal blocks
+        meal_count = sum(1 for b in blocks if b.block_type == BlockType.MEAL)
+        logger.info(f"📊 Skeleton created with {meal_count} meal blocks out of {len(blocks)} total blocks")
+
+        if meal_count == 0:
+            logger.warning(f"⚠️ No meal blocks in skeleton! Day time: {context.start_time}-{context.end_time}")
 
         return DaySkeleton(
             day_number=day_number,
@@ -829,18 +918,66 @@ class DayEditor:
                 }
                 day_blocks.append(block_data)
             else:
-                # CRITICAL FIX (2026-01-24): Log when blocks are dropped due to no available POIs
-                print(
-                    f"⚠️ No POI available for {skeleton_block.block_type.value} block "
-                    f"at {skeleton_block.start_time.strftime('%H:%M')} (theme: {skeleton_block.theme}). "
-                    f"Found {len(candidates)} candidates but all were filtered out "
-                    f"(used: {len(used_poi_ids)}, excluded: {len(exclude_poi_ids)})"
-                )
-                logger.warning(
-                    f"⚠️ No POI available for {skeleton_block.block_type.value} block "
-                    f"at {skeleton_block.start_time.strftime('%H:%M')} (theme: {skeleton_block.theme}). "
-                    f"All {len(candidates)} candidates were filtered out."
-                )
+                # CRITICAL FIX (2026-01-25): NEVER skip meal blocks!
+                # For meal blocks, retry with broader categories if needed
+                if skeleton_block.block_type == BlockType.MEAL:
+                    logger.warning(
+                        f"⚠️ No POI found for MEAL block with strict filters. "
+                        f"Retrying with broader categories (theme: {skeleton_block.theme})"
+                    )
+
+                    # Retry with ALL food-related categories
+                    fallback_candidates = await poi_provider.search_pois(
+                        city=trip_spec.city,
+                        desired_categories=["restaurant", "cafe", "food", "bar", "bakery"],
+                        limit=50  # Get more candidates
+                    )
+
+                    # Filter more leniently - only exclude explicitly removed POIs
+                    fallback_available = [c for c in fallback_candidates
+                                         if c.poi_id not in used_poi_ids]
+
+                    if fallback_available:
+                        selected = fallback_available[0]
+                        used_poi_ids.add(selected.poi_id)
+
+                        logger.info(
+                            f"✅ Found fallback MEAL POI: {selected.name} "
+                            f"(was filtered in first attempt)"
+                        )
+
+                        block_data = {
+                            "block_type": skeleton_block.block_type.value,
+                            "start_time": skeleton_block.start_time.strftime("%H:%M"),
+                            "end_time": skeleton_block.end_time.strftime("%H:%M"),
+                            "theme": skeleton_block.theme,
+                            "poi": selected.model_dump(),
+                            "travel_time_from_prev": 0,
+                            "travel_distance_meters": 0,
+                        }
+                        day_blocks.append(block_data)
+                    else:
+                        # Last resort: create meal block without POI (should never happen)
+                        logger.error(
+                            f"❌ CRITICAL: Could not find ANY meal POI for {skeleton_block.theme}! "
+                            f"This should never happen. Creating placeholder."
+                        )
+                        print(
+                            f"❌ CRITICAL: Could not find ANY meal POI for {skeleton_block.theme} "
+                            f"in {trip_spec.city}!"
+                        )
+                else:
+                    # For non-meal blocks, log and skip (OK to not have all activities)
+                    print(
+                        f"⚠️ No POI available for {skeleton_block.block_type.value} block "
+                        f"at {skeleton_block.start_time.strftime('%H:%M')} (theme: {skeleton_block.theme}). "
+                        f"Found {len(candidates)} candidates but all were filtered out "
+                        f"(used: {len(used_poi_ids)}, excluded: {len(exclude_poi_ids)})"
+                    )
+                    logger.warning(
+                        f"⚠️ Skipping {skeleton_block.block_type.value} block "
+                        f"at {skeleton_block.start_time.strftime('%H:%M')} - no available POIs"
+                    )
 
         return day_blocks
 

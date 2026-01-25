@@ -57,3 +57,34 @@ docker-compose.override.yml
 
 # local screenshots
 test_screens_folder/
+
+# Xcode user-specific files
+*.xcuserstate
+*.xcuserdatad/
+
+# Claude local settings
+.claude/settings.local.json
+
+# Test files and reports (in root directory)
+test_*.py
+test_*.sh
+test_*.log
+test_*.json
+*_REPORT.md
+*_STATUS.md
+*_SUMMARY.md
+*_FIXES*.md
+*_FIX*.md
+*_ANALYSIS.md
+*_CHECKLIST.md
+analyze_*.py
+check_*.py
+cleanup_*.py
+normalize_*.py
+verify_*.sh
+quick_*.sh
+*.png
+PROMPT_FOR_NEW_CHAT.md
+QUICK_START_IOS_TEST.md
+IOS_TESTING_INSTRUCTIONS.md
+PLACE_REPLACEMENT_COMPLETE.md

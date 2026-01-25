@@ -21,6 +21,10 @@ protocol TripPlanningAPIClientProtocol {
     func getDayStudio(tripId: UUID, dayId: Int) async throws -> DayStudioResponseDTO
     func applyDayChanges(tripId: UUID, dayId: Int, request: ApplyChangesRequestDTO) async throws -> ApplyChangesResponseDTO
     func searchPlaces(request: PlaceSearchRequestDTO) async throws -> PlaceSearchResponseDTO
+
+    // Place Replacement endpoints
+    func getReplacementOptions(tripId: String, request: ReplacementOptionsRequestDTO) async throws -> ReplacementOptionsResponseDTO
+    func applyReplacement(tripId: String, request: ApplyReplacementRequestDTO) async throws -> ReplacementAppliedResponseDTO
 }
 
 // MARK: - Implementation
@@ -486,6 +490,112 @@ final class TripPlanningAPIClient: TripPlanningAPIClientProtocol {
                 }
                 throw APIError.decodingError(error)
             }
+
+        default:
+            let message = String(data: data, encoding: .utf8)
+            print("❌ HTTP error: \(httpResponse.statusCode), message: \(message ?? "none")")
+            throw APIError.httpError(statusCode: httpResponse.statusCode, message: message)
+        }
+    }
+
+    // MARK: - Place Replacement Methods
+
+    /// Get replacement options for a place
+    /// POST /trips/{trip_id}/route/replacements/options
+    func getReplacementOptions(tripId: String, request: ReplacementOptionsRequestDTO) async throws -> ReplacementOptionsResponseDTO {
+        print("🔄 Getting replacement options for trip: \(tripId)")
+
+        // Encode request body
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let bodyData = try encoder.encode(request)
+
+        // Build request
+        let urlRequest = try requestBuilder.buildRequest(
+            path: "trips/\(tripId)/route/replacements/options",
+            method: .post,
+            body: bodyData
+        )
+
+        // Execute request
+        let (data, response) = try await session.data(for: urlRequest)
+
+        // Handle response
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError(NSError(domain: "Invalid response", code: -1))
+        }
+
+        print("📡 Response status: \(httpResponse.statusCode)")
+
+        switch httpResponse.statusCode {
+        case 200:
+            let decoder = JSONDecoder()
+            do {
+                let optionsResponse = try decoder.decode(ReplacementOptionsResponseDTO.self, from: data)
+                print("✅ Found \(optionsResponse.options.count) replacement options")
+                return optionsResponse
+            } catch {
+                print("❌ Decoding error: \(error)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📄 Response JSON: \(jsonString.prefix(500))")
+                }
+                throw APIError.decodingError(error)
+            }
+
+        default:
+            let message = String(data: data, encoding: .utf8)
+            print("❌ HTTP error: \(httpResponse.statusCode), message: \(message ?? "none")")
+            throw APIError.httpError(statusCode: httpResponse.statusCode, message: message)
+        }
+    }
+
+    /// Apply place replacement
+    /// POST /trips/{trip_id}/route/replacements/apply
+    func applyReplacement(tripId: String, request: ApplyReplacementRequestDTO) async throws -> ReplacementAppliedResponseDTO {
+        print("🔄 Applying replacement for trip: \(tripId)")
+
+        // Encode request body
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let bodyData = try encoder.encode(request)
+
+        // Build request
+        let urlRequest = try requestBuilder.buildRequest(
+            path: "trips/\(tripId)/route/replacements/apply",
+            method: .post,
+            body: bodyData
+        )
+
+        // Execute request
+        let (data, response) = try await session.data(for: urlRequest)
+
+        // Handle response
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError(NSError(domain: "Invalid response", code: -1))
+        }
+
+        print("📡 Response status: \(httpResponse.statusCode)")
+
+        switch httpResponse.statusCode {
+        case 200:
+            let decoder = JSONDecoder()
+            do {
+                let appliedResponse = try decoder.decode(ReplacementAppliedResponseDTO.self, from: data)
+                print("✅ Replacement applied successfully")
+                return appliedResponse
+            } catch {
+                print("❌ Decoding error: \(error)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📄 Response JSON: \(jsonString.prefix(500))")
+                }
+                throw APIError.decodingError(error)
+            }
+
+        case 409:
+            // Version conflict
+            let message = String(data: data, encoding: .utf8)
+            print("⚠️ Version conflict: \(message ?? "none")")
+            throw APIError.httpError(statusCode: 409, message: message)
 
         default:
             let message = String(data: data, encoding: .utf8)
